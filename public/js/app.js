@@ -33,12 +33,18 @@ const TRIBUNAIS = [
   { alias: 'tse', nome: 'Tribunal Superior Eleitoral', tipo: 'superior' }
 ];
 
+// Valores Padrão Globais (Área do Desenvolvedor)
+const DEFAULT_GEMINI_API_KEY = ''; // Chave padrão vazia no frontend para segurança (GitHub bloqueia chaves expostas). O servidor usará a chave definida no .env / variáveis de ambiente.
+const DEFAULT_SUPABASE_URL = 'https://kivijjbwktgcjbthkque.supabase.co';
+const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdmlqamJ3a3RnY2pidGhrcXVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNTc2MzQsImV4cCI6MjA5OTczMzYzNH0.iknAdlHezamlfpM436vGGUCUIi_l4yQdDjr8VW91wRE';
+const DEFAULT_SUPABASE_BUCKET = 'Datajud';
+
 // Estado da Aplicação (Variáveis Globais) - Sem simulações fictícias
 let customApiKey = '';
 let geminiApiKey = '';
 let supabaseUrl = '';
 let supabaseAnonKey = '';
-let supabaseBucket = 'processos-pdfs';
+let supabaseBucket = 'Datajud';
 let supabaseClient = null;
 let activeProcess = null;
 let currentCalendarMonth = new Date().getMonth();
@@ -556,17 +562,18 @@ function loadConfig() {
   customApiKey = localStorage.getItem('datajud_api_key') || '';
   document.getElementById('settings-datajud-key').value = customApiKey;
   
-  geminiApiKey = localStorage.getItem('gemini_api_key') || '';
-  document.getElementById('settings-gemini-key').value = geminiApiKey;
+  // Se houver chave personalizada no localStorage, usa ela. Caso contrário, usa a padrão global.
+  geminiApiKey = localStorage.getItem('gemini_api_key') || DEFAULT_GEMINI_API_KEY;
+  document.getElementById('settings-gemini-key').value = localStorage.getItem('gemini_api_key') || '';
 
-  supabaseUrl = localStorage.getItem('supabase_url') || '';
-  document.getElementById('settings-supabase-url').value = supabaseUrl;
+  supabaseUrl = localStorage.getItem('supabase_url') || DEFAULT_SUPABASE_URL;
+  document.getElementById('settings-supabase-url').value = localStorage.getItem('supabase_url') || '';
 
-  supabaseAnonKey = localStorage.getItem('supabase_anon_key') || '';
-  document.getElementById('settings-supabase-anon-key').value = supabaseAnonKey;
+  supabaseAnonKey = localStorage.getItem('supabase_anon_key') || DEFAULT_SUPABASE_ANON_KEY;
+  document.getElementById('settings-supabase-anon-key').value = localStorage.getItem('supabase_anon_key') || '';
 
-  supabaseBucket = localStorage.getItem('supabase_bucket') || 'processos-pdfs';
-  document.getElementById('settings-supabase-bucket').value = supabaseBucket;
+  supabaseBucket = localStorage.getItem('supabase_bucket') || DEFAULT_SUPABASE_BUCKET;
+  document.getElementById('settings-supabase-bucket').value = localStorage.getItem('supabase_bucket') || '';
 }
 
 // Popula o select de tribunais do cadastro manual
@@ -613,10 +620,25 @@ function openDialog(dialogId) {
   document.getElementById(dialogId).classList.add('active');
 }
 
+function resetDevTab() {
+  const lockedContainer = document.getElementById('dev-locked-container');
+  const unlockedContainer = document.getElementById('dev-unlocked-container');
+  const passwordInput = document.getElementById('dev-password-input');
+  const passwordError = document.getElementById('dev-password-error');
+  
+  if (lockedContainer) lockedContainer.style.display = 'block';
+  if (unlockedContainer) unlockedContainer.style.display = 'none';
+  if (passwordInput) passwordInput.value = '';
+  if (passwordError) passwordError.style.display = 'none';
+}
+
 function closeDialog(dialogId) {
   document.getElementById(dialogId).classList.remove('active');
   if (dialogId === 'register-process-dialog') {
     resetRegisterForm();
+  }
+  if (dialogId === 'settings-dialog') {
+    resetDevTab();
   }
 }
 
@@ -801,6 +823,37 @@ function setupEventListeners() {
   setupKeyVisibility('btn-toggle-datajud-key-visibility', 'settings-datajud-key', 'datajud-key-visibility-icon');
   setupKeyVisibility('btn-toggle-supabase-key-visibility', 'settings-supabase-anon-key', 'supabase-key-visibility-icon');
 
+  // Botão de desbloqueio do painel do desenvolvedor
+  const btnUnlockDev = document.getElementById('btn-unlock-dev');
+  if (btnUnlockDev) {
+    btnUnlockDev.addEventListener('click', (e) => {
+      e.preventDefault();
+      const pwInput = document.getElementById('dev-password-input');
+      const errorMsg = document.getElementById('dev-password-error');
+      const lockedCont = document.getElementById('dev-locked-container');
+      const unlockedCont = document.getElementById('dev-unlocked-container');
+      
+      if (pwInput && pwInput.value === 'Lgintel') {
+        if (lockedCont) lockedCont.style.display = 'none';
+        if (unlockedCont) unlockedCont.style.display = 'block';
+        if (errorMsg) errorMsg.style.display = 'none';
+        showToast('Área do Desenvolvedor desbloqueada!');
+      } else {
+        if (errorMsg) errorMsg.style.display = 'block';
+      }
+    });
+  }
+
+  const devPasswordInput = document.getElementById('dev-password-input');
+  if (devPasswordInput) {
+    devPasswordInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (btnUnlockDev) btnUnlockDev.click();
+      }
+    });
+  }
+
   // Gerenciamento de arquivos e dados
   document.getElementById('btn-export-data').addEventListener('click', exportData);
   document.getElementById('btn-import-trigger').addEventListener('click', () => {
@@ -901,6 +954,7 @@ function setupEventListeners() {
     document.getElementById('edit-expert-deposito').value = info.depositoJudicial || 'Não informado';
     document.getElementById('edit-expert-data-honorarios').value = info.dataHonorarios || '';
     document.getElementById('edit-expert-objeto').value = info.objetoPericia || '';
+    document.getElementById('edit-expert-resumo').value = info.resumoProcesso || '';
   });
 
   document.getElementById('btn-cancel-expert-edit').addEventListener('click', () => {
@@ -922,7 +976,8 @@ function setupEventListeners() {
       honorarios: isNaN(honorariosVal) ? null : honorariosVal,
       depositoJudicial: document.getElementById('edit-expert-deposito').value,
       dataHonorarios: document.getElementById('edit-expert-data-honorarios').value || null,
-      objetoPericia: document.getElementById('edit-expert-objeto').value.trim() || 'Não localizado'
+      objetoPericia: document.getElementById('edit-expert-objeto').value.trim() || 'Não localizado',
+      resumoProcesso: document.getElementById('edit-expert-resumo').value.trim() || 'Não localizado'
     };
 
     await ProcessService.update(activeProcess);
@@ -2056,6 +2111,7 @@ function renderExpertInfoCard(process) {
   document.getElementById('expert-val-honorarios-corrigido').textContent = honorariosCorrigidos;
   
   document.getElementById('expert-val-objeto').textContent = info.objetoPericia || 'Não localizado';
+  document.getElementById('expert-val-resumo').textContent = info.resumoProcesso || 'Não localizado';
 }
 
 // Controla exibição das caixas e tarjas de PDF no modal de detalhes
@@ -2333,6 +2389,9 @@ async function generateAIAnalysis() {
     if (result.dataHonorarios) {
       activeProcess.expertInfo.dataHonorarios = result.dataHonorarios;
     }
+    if (result.resumoProcesso) {
+      activeProcess.expertInfo.resumoProcesso = result.resumoProcesso;
+    }
     
     // Converte os prazos forenses calculados pela IA em tarefas do perito
     if (result.deadlines && Array.isArray(result.deadlines)) {
@@ -2394,21 +2453,43 @@ async function saveSettings() {
   const gKey = document.getElementById('settings-gemini-key').value.trim();
   const sUrl = document.getElementById('settings-supabase-url').value.trim();
   const sAnon = document.getElementById('settings-supabase-anon-key').value.trim();
-  let sBucket = document.getElementById('settings-supabase-bucket').value.trim();
-
-  if (!sBucket) sBucket = 'processos-pdfs';
+  const sBucket = document.getElementById('settings-supabase-bucket').value.trim();
 
   customApiKey = dKey;
-  geminiApiKey = gKey;
-  supabaseUrl = sUrl;
-  supabaseAnonKey = sAnon;
-  supabaseBucket = sBucket;
-
   localStorage.setItem('datajud_api_key', dKey);
-  localStorage.setItem('gemini_api_key', gKey);
-  localStorage.setItem('supabase_url', sUrl);
-  localStorage.setItem('supabase_anon_key', sAnon);
-  localStorage.setItem('supabase_bucket', sBucket);
+
+  // Se o campo estiver em branco, remove do localStorage (fallback para o valor global padrão)
+  if (gKey) {
+    geminiApiKey = gKey;
+    localStorage.setItem('gemini_api_key', gKey);
+  } else {
+    geminiApiKey = DEFAULT_GEMINI_API_KEY;
+    localStorage.removeItem('gemini_api_key');
+  }
+
+  if (sUrl) {
+    supabaseUrl = sUrl;
+    localStorage.setItem('supabase_url', sUrl);
+  } else {
+    supabaseUrl = DEFAULT_SUPABASE_URL;
+    localStorage.removeItem('supabase_url');
+  }
+
+  if (sAnon) {
+    supabaseAnonKey = sAnon;
+    localStorage.setItem('supabase_anon_key', sAnon);
+  } else {
+    supabaseAnonKey = DEFAULT_SUPABASE_ANON_KEY;
+    localStorage.removeItem('supabase_anon_key');
+  }
+
+  if (sBucket) {
+    supabaseBucket = sBucket;
+    localStorage.setItem('supabase_bucket', sBucket);
+  } else {
+    supabaseBucket = DEFAULT_SUPABASE_BUCKET;
+    localStorage.removeItem('supabase_bucket');
+  }
 
   supabaseClient = null; // Invalida cliente antigo para recriar com novas chaves
 

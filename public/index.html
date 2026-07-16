@@ -558,6 +558,11 @@
               <span class="expert-label">Objeto da Perícia</span>
               <span class="expert-value" id="expert-val-objeto">-</span>
             </div>
+            
+            <div class="expert-object-row" style="margin-top: 8px;">
+              <span class="expert-label">Resumo do Processo (Nomeação e Honorários)</span>
+              <span class="expert-value" id="expert-val-resumo">-</span>
+            </div>
           </div>
           
           <!-- Formulário Inline de Edição da Ficha (Oculto por padrão) -->
@@ -619,6 +624,10 @@
             <div class="form-field-group" style="margin-top: 8px;">
               <label for="edit-expert-objeto">Objeto da Perícia</label>
               <input type="text" id="edit-expert-objeto" placeholder="Ex: Apuração de nexo causal em erro médico">
+            </div>
+            <div class="form-field-group" style="margin-top: 8px;">
+              <label for="edit-expert-resumo">Resumo do Processo (Nomeação e Honorários)</label>
+              <textarea id="edit-expert-resumo" placeholder="Ex: Perito nomeado. Proposta de honorários de R$ 4.000,00 homologada pelo juiz." style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); resize: vertical; min-height: 60px; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);"></textarea>
             </div>
             <div class="edit-actions" style="margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px;">
               <button class="md-btn md-btn-text" id="btn-cancel-expert-edit">Cancelar</button>
@@ -877,29 +886,16 @@
           <span class="material-symbols-rounded">archive</span>
           <span>Arquivados</span>
         </button>
+        <button class="tab-btn" data-settings-target="settings-tab-desenvolvedor">
+          <span class="material-symbols-rounded">developer_mode</span>
+          <span>Desenvolvedor</span>
+        </button>
       </div>
       
       <div class="dialog-content">
         
         <!-- Tab 1: Chaves e APIs -->
         <div class="settings-tab-content active-tab" id="settings-tab-chaves">
-          <!-- Chave do Gemini -->
-          <div class="settings-group">
-            <h4>Inteligência Artificial (Gemini / OpenRouter / Groq)</h4>
-            <p class="settings-desc">Insira sua chave de API pessoal do Gemini, OpenRouter ou Groq para realizar a análise processual jurídica.</p>
-            
-            <div class="md-text-field">
-              <span class="material-symbols-rounded field-icon">key</span>
-              <input type="password" id="settings-gemini-key" placeholder="AIzaSy... ou gsk_... ou sk-or-...">
-              <button class="clear-btn" id="btn-toggle-gemini-key-visibility">
-                <span class="material-symbols-rounded" id="gemini-key-visibility-icon">visibility</span>
-              </button>
-            </div>
-            <span class="settings-info-text">Aceita chaves do Google AI Studio, OpenRouter ou Groq Cloud.</span>
-          </div>
-          
-          <div class="form-divider"></div>
-          
           <!-- Chave do Datajud -->
           <div class="settings-group">
             <h4>Acesso ao CNJ (Datajud)</h4>
@@ -911,41 +907,6 @@
               <button class="clear-btn" id="btn-toggle-datajud-key-visibility">
                 <span class="material-symbols-rounded" id="datajud-key-visibility-icon">visibility</span>
               </button>
-            </div>
-          </div>
-
-          <div class="form-divider"></div>
-
-          <!-- Supabase Storage Config -->
-          <div class="settings-group">
-            <h4>Armazenamento em Nuvem (Supabase Storage)</h4>
-            <p class="settings-desc">Insira as credenciais do Supabase para hospedar e persistir os arquivos PDF na nuvem de forma gratuita.</p>
-            
-            <div class="form-field-group" style="margin-bottom: 12px;">
-              <label for="settings-supabase-url">Supabase Project URL</label>
-              <div class="md-text-field" style="margin-top: 4px;">
-                <span class="material-symbols-rounded field-icon">link</span>
-                <input type="text" id="settings-supabase-url" placeholder="https://xxxxxxxxxxxxxx.supabase.co">
-              </div>
-            </div>
-            
-            <div class="form-field-group" style="margin-bottom: 12px;">
-              <label for="settings-supabase-anon-key">Supabase Anon Key</label>
-              <div class="md-text-field" style="margin-top: 4px;">
-                <span class="material-symbols-rounded field-icon">key</span>
-                <input type="password" id="settings-supabase-anon-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
-                <button class="clear-btn" id="btn-toggle-supabase-key-visibility" type="button">
-                  <span class="material-symbols-rounded" id="supabase-key-visibility-icon">visibility</span>
-                </button>
-              </div>
-            </div>
-
-            <div class="form-field-group">
-              <label for="settings-supabase-bucket">Nome do Bucket (Padrão: processos-pdfs)</label>
-              <div class="md-text-field" style="margin-top: 4px;">
-                <span class="material-symbols-rounded field-icon">folder_open</span>
-                <input type="text" id="settings-supabase-bucket" placeholder="processos-pdfs">
-              </div>
             </div>
           </div>
         </div>
@@ -1090,6 +1051,74 @@
             
             <div id="settings-archived-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 250px; overflow-y: auto; margin-top: 12px; padding-right: 4px;">
               <!-- Lista injetada dinamicamente via JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 5: Área do Desenvolvedor -->
+        <div class="settings-tab-content" id="settings-tab-desenvolvedor" style="display: none;">
+          <!-- Estado Bloqueado: Solicita Senha -->
+          <div id="dev-locked-container">
+            <div class="settings-group">
+              <h4>Acesso Restrito ao Desenvolvedor</h4>
+              <p class="settings-desc">Digite a senha de desenvolvedor para liberar a alteração das chaves globais da aplicação.</p>
+              <div class="md-text-field" style="margin-top: 12px;">
+                <span class="material-symbols-rounded field-icon">lock</span>
+                <input type="password" id="dev-password-input" placeholder="Senha do desenvolvedor">
+                <button class="md-btn md-btn-primary" id="btn-unlock-dev" style="margin-left: 8px;" type="button">Liberar</button>
+              </div>
+              <p id="dev-password-error" style="color: var(--md-sys-color-error); font-size: 12px; margin-top: 8px; display: none; font-weight: bold;">⚠️ Senha incorreta.</p>
+            </div>
+          </div>
+
+          <!-- Estado Liberado: Configurações Globais -->
+          <div id="dev-unlocked-container" style="display: none;">
+            <!-- Chave do Gemini (Groq) -->
+            <div class="settings-group">
+              <h4>Inteligência Artificial (Groq / Gemini)</h4>
+              <p class="settings-desc">Chave de API global utilizada para análise processual jurídica.</p>
+              <div class="md-text-field">
+                <span class="material-symbols-rounded field-icon">key</span>
+                <input type="password" id="settings-gemini-key" placeholder="gsk_...">
+                <button class="clear-btn" id="btn-toggle-gemini-key-visibility" type="button">
+                  <span class="material-symbols-rounded" id="gemini-key-visibility-icon">visibility</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="form-divider"></div>
+
+            <!-- Supabase Storage Config -->
+            <div class="settings-group">
+              <h4>Armazenamento em Nuvem (Supabase Storage)</h4>
+              <p class="settings-desc">Credenciais do Supabase para hospedar e persistir os arquivos PDF na nuvem.</p>
+              
+              <div class="form-field-group" style="margin-bottom: 12px;">
+                <label for="settings-supabase-url">Supabase Project URL</label>
+                <div class="md-text-field" style="margin-top: 4px;">
+                  <span class="material-symbols-rounded field-icon">link</span>
+                  <input type="text" id="settings-supabase-url" placeholder="https://xxxxxxxxxxxxxx.supabase.co">
+                </div>
+              </div>
+              
+              <div class="form-field-group" style="margin-bottom: 12px;">
+                <label for="settings-supabase-anon-key">Supabase Anon Key</label>
+                <div class="md-text-field" style="margin-top: 4px;">
+                  <span class="material-symbols-rounded field-icon">key</span>
+                  <input type="password" id="settings-supabase-anon-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+                  <button class="clear-btn" id="btn-toggle-supabase-key-visibility" type="button">
+                    <span class="material-symbols-rounded" id="supabase-key-visibility-icon">visibility</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="form-field-group">
+                <label for="settings-supabase-bucket">Nome do Bucket</label>
+                <div class="md-text-field" style="margin-top: 4px;">
+                  <span class="material-symbols-rounded field-icon">folder_open</span>
+                  <input type="text" id="settings-supabase-bucket" placeholder="Datajud">
+                </div>
+              </div>
             </div>
           </div>
         </div>

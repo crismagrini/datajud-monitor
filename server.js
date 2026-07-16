@@ -867,6 +867,7 @@ Você deve responder APENAS com um objeto JSON válido, sem qualquer texto de in
   "honorarios": 4500.00, // Retorne apenas o número (float/int) do valor fixado pelo juiz ou proposto pelo perito se localizado. Se não localizado, retorne null.
   "depositoJudicial": "Sim ou Não ou Parcial ou Não informado", // Indique se foi efetuado o depósito judicial do valor dos honorários
   "dataHonorarios": "YYYY-MM-DD", // A data em que ocorreu a decisão fixando os honorários ou a petição de proposta. Se não localizado, retorne null.
+  "resumoProcesso": "Resumo curto (máximo 45 palavras) sobre a nomeação do perito e proposta de honorários, detalhando se a proposta foi aceita/homologada ou se houve arbitramento de valores pelo juiz.",
   "deadlines": [
     {
       "title": "Apresentar proposta de honorários",
@@ -901,7 +902,8 @@ ${pdfText}
       inversaoOnus: parsed.inversaoOnus || 'Não informado',
       honorarios: parsed.honorarios || null,
       depositoJudicial: parsed.depositoJudicial || 'Não informado',
-      dataHonorarios: parsed.dataHonorarios || null
+      dataHonorarios: parsed.dataHonorarios || null,
+      resumoProcesso: parsed.resumoProcesso || 'Não localizado'
     });
   } catch (error) {
     console.error('[IA] Erro ao processar a análise:', error);
