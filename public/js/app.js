@@ -169,7 +169,16 @@ const ProcessService = {
       if (!currentUserEmail) return false;
       const db = await getDB();
       const processes = await this.getProcesses();
-      if (processes.some(p => p.numeroProcesso === process.numeroProcesso)) return false;
+      
+      const existing = processes.find(p => p.numeroProcesso === process.numeroProcesso);
+      if (existing) {
+        if (existing.archived) {
+          existing.archived = false;
+          await this.update(existing);
+          return 'reactivated';
+        }
+        return false;
+      }
       
       process.hasUpdate = false;
       process.lastChecked = new Date().toISOString();
@@ -1433,8 +1442,12 @@ async function handleRegisterSubmit() {
 
     if (processObject) {
       const added = await ProcessService.add(processObject);
-      if (added) {
+      if (added === true) {
         showToast(`Processo ${formatProcessNumber(processObject.numeroProcesso)} cadastrado com sucesso!`);
+        closeDialog('register-process-dialog');
+        await renderDashboard();
+      } else if (added === 'reactivated') {
+        showToast(`Processo ${formatProcessNumber(processObject.numeroProcesso)} reativado com sucesso!`);
         closeDialog('register-process-dialog');
         await renderDashboard();
       } else {
