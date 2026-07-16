@@ -20,53 +20,12 @@ if (fs.existsSync(path.join(__dirname, '.env'))) {
   });
 }
 
+const db = require('./db');
+
 const JWT_SECRET = process.env.JWT_SECRET || 'secret-key-monitor-datajud-12345';
-const USERS_FILE = path.join(__dirname, 'data', 'users.json');
-
-// Garante que o diretório data exista
-if (!fs.existsSync(path.dirname(USERS_FILE))) {
-  fs.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
-}
-
-// Inicializa arquivo de usuários se não existir
-if (!fs.existsSync(USERS_FILE)) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify([]));
-}
-
-function loadUsers() {
-  try {
-    const data = fs.readFileSync(USERS_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (e) {
-    return [];
-  }
-}
-
-function saveUsers(users) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
-}
-
-// Inicializa arquivo de radar se não existir
-const RADAR_FILE = path.join(__dirname, 'data', 'radar.json');
-if (!fs.existsSync(RADAR_FILE)) {
-  fs.writeFileSync(RADAR_FILE, JSON.stringify([]));
-}
-
-function loadRadar() {
-  try {
-    const data = fs.readFileSync(RADAR_FILE, 'utf8');
-    return JSON.parse(data);
-  } catch (e) {
-    return [];
-  }
-}
-
-function saveRadar(data) {
-  fs.writeFileSync(RADAR_FILE, JSON.stringify(data, null, 2));
-}
 
 // Middleware para validar token JWT nas rotas protegidas
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
@@ -74,13 +33,9 @@ function authenticateToken(req, res, next) {
     return res.status(401).json({ error: 'Acesso negado. Faça login para continuar.' });
   }
 
-  jwt.verify(token, JWT_SECRET, (err, payload) => {
-    if (err) {
-      return res.status(403).json({ error: 'Sua sessão expirou ou o token é inválido.' });
-    }
-    
-    const users = loadUsers();
-    const dbUser = users.find(u => u.email === payload.email);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    const dbUser = await db.findUserByEmail(payload.email);
     if (!dbUser) {
       return res.status(404).json({ error: 'Usuário não localizado.' });
     }
@@ -92,7 +47,9 @@ function authenticateToken(req, res, next) {
 
     req.user = dbUser;
     next();
-  });
+  } catch (err) {
+    return res.status(403).json({ error: 'Sua sessão expirou ou o token é inválido.' });
+  }
 }
 
 const app = express();
@@ -118,17 +75,17 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   const emailClean = email.trim().toLowerCase();
-  const users = loadUsers();
-
-  if (users.some(u => u.email === emailClean)) {
-    return res.status(400).json({ error: 'Este e-mail já está cadastrado.' });
-  }
 
   try {
+    const existingUser = await db.findUserByEmail(emailClean);
+    if (existingUser) {
+      return res.status(400).json({ error: 'Este e-mail já está cadastrado.' });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     
-    users.push({
+    await db.createUser({
       email: emailClean,
       password: hashedPassword,
       name: name.trim(),
@@ -138,7 +95,6 @@ app.post('/api/auth/register', async (req, res) => {
       createdAt: new Date().toISOString()
     });
     
-    saveUsers(users);
     console.log(`[Verificação de E-mail] Código gerado para ${emailClean}: ${verificationCode}`);
     res.status(201).json({ 
       message: 'Cadastro realizado com sucesso!',
@@ -159,14 +115,13 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   const emailClean = email.trim().toLowerCase();
-  const users = loadUsers();
-  const user = users.find(u => u.email === emailClean);
-
-  if (!user) {
-    return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
-  }
-
+  
   try {
+    const user = await db.findUserByEmail(emailClean);
+    if (!user) {
+      return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
+    }
+
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
@@ -192,14 +147,12 @@ app.post('/api/auth/verify-password', authenticateToken, async (req, res) => {
     return res.status(400).json({ error: 'O parâmetro "password" é obrigatório.' });
   }
 
-  const users = loadUsers();
-  const user = users.find(u => u.email === req.user.email);
-
-  if (!user) {
-    return res.status(404).json({ error: 'Usuário não localizado.' });
-  }
-
   try {
+    const user = await db.findUserByEmail(req.user.email);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não localizado.' });
+    }
+
     const isPasswordValid = await bcrypt.compare(password, user.password);
     res.json({ valid: isPasswordValid });
   } catch (err) {
@@ -215,19 +168,22 @@ app.post('/api/auth/verify-email', authenticateToken, async (req, res) => {
     return res.status(400).json({ error: 'O código de verificação é obrigatório.' });
   }
   
-  const users = loadUsers();
-  const user = users.find(u => u.email === req.user.email);
-  if (!user) {
-    return res.status(404).json({ error: 'Usuário não localizado.' });
+  try {
+    const user = await db.findUserByEmail(req.user.email);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não localizado.' });
+    }
+    
+    if (user.verificationCode !== code.trim()) {
+      return res.status(400).json({ error: 'Código de verificação incorreto.' });
+    }
+    
+    await db.updateUser(req.user.email, { verified: true });
+    res.json({ message: 'E-mail verificado com sucesso!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha interna ao verificar e-mail.' });
   }
-  
-  if (user.verificationCode !== code.trim()) {
-    return res.status(400).json({ error: 'Código de verificação incorreto.' });
-  }
-  
-  user.verified = true;
-  saveUsers(users);
-  res.json({ message: 'E-mail verificado com sucesso!' });
 });
 
 // Rota para exclusão integral da conta e dados (PROTEGIDA)
@@ -242,22 +198,18 @@ app.post('/api/auth/delete-account', authenticateToken, async (req, res) => {
     return res.status(400).json({ error: 'O e-mail de confirmação não confere com o usuário logado.' });
   }
   
-  const users = loadUsers();
-  const userIndex = users.findIndex(u => u.email === req.user.email);
-  if (userIndex === -1) {
-    return res.status(404).json({ error: 'Usuário não localizado.' });
-  }
-  
-  const user = users[userIndex];
   try {
+    const user = await db.findUserByEmail(req.user.email);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não localizado.' });
+    }
+
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({ error: 'Senha incorreta. A deleção foi cancelada.' });
     }
     
-    // Remove o usuário de users.json
-    users.splice(userIndex, 1);
-    saveUsers(users);
+    await db.deleteUser(req.user.email);
     
     console.log(`[Segurança] Conta excluída permanentemente: ${emailClean}`);
     res.json({ message: 'Conta e dados excluídos permanentemente.' });
@@ -268,47 +220,33 @@ app.post('/api/auth/delete-account', authenticateToken, async (req, res) => {
 });
 
 // Rota para buscar as publicações no Radar de Nomeações (PROTEGIDA)
-app.get('/api/radar/notifications', authenticateToken, (req, res) => {
-  const users = loadUsers();
-  const user = users.find(u => u.email === req.user.email);
-  if (!user) {
-    return res.status(404).json({ error: 'Usuário não localizado.' });
+app.get('/api/radar/notifications', authenticateToken, async (req, res) => {
+  try {
+    // Auto-limpeza: purga os registros antigos fictícios se existirem
+    await db.purgeMockRadarItems();
+
+    const userRadar = await db.getRadarForUser(req.user.email);
+    res.json(userRadar);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha ao carregar radar de nomeações.' });
   }
-
-  let radarData = loadRadar();
-  
-  // Auto-limpeza: purga os registros antigos fictícios se existirem no banco local de radar
-  const initialLength = radarData.length;
-  radarData = radarData.filter(item => 
-    item.numeroProcesso !== '1011405-32.2025.8.26.0002' && 
-    item.numeroProcesso !== '5001243-85.2026.4.03.6100'
-  );
-  if (radarData.length !== initialLength) {
-    saveRadar(radarData);
-  }
-
-  let userRadar = radarData.filter(item => item.userEmail === user.email);
-
-  // Retorna apenas as não importadas
-  res.json(userRadar.filter(item => !item.imported));
 });
 
 // Rota para marcar publicação do radar como importada (PROTEGIDA)
-app.post('/api/radar/import', authenticateToken, (req, res) => {
+app.post('/api/radar/import', authenticateToken, async (req, res) => {
   const { id } = req.body;
   if (!id) {
     return res.status(400).json({ error: 'O ID da nomeação é obrigatório.' });
   }
 
-  const radarData = loadRadar();
-  const item = radarData.find(r => r.id === id && r.userEmail === req.user.email);
-  if (!item) {
-    return res.status(404).json({ error: 'Nomeação não localizada no radar.' });
+  try {
+    await db.markRadarAsImported(id, req.user.email);
+    res.json({ message: 'Nomeação marcada como importada.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha ao marcar nomeação como importada.' });
   }
-
-  item.imported = true;
-  saveRadar(radarData);
-  res.json({ message: 'Nomeação marcada como importada.' });
 });
 
 // Rota para varrer tribunais no Datajud em busca de nomeações reais do perito (PROTEGIDA)
@@ -319,123 +257,125 @@ app.post('/api/radar/scan', authenticateToken, async (req, res) => {
   const clientApiKey = req.headers['x-api-key'];
   const apiKey = clientApiKey && clientApiKey.trim() !== '' ? clientApiKey : (process.env.DATAJUD_API_KEY || DEFAULT_API_KEY);
 
-  let radarData = loadRadar();
-  const existingIds = new Set(radarData.map(r => r.id));
+  try {
+    const existingIds = await db.getExistingRadarIds(user.email);
 
-  async function scanTribunal(tribunal) {
-    const url = `https://api-publica.datajud.cnj.jus.br/api_publica_${tribunal}/_search`;
-    const query = {
-      size: 30,
-      query: {
-        bool: {
-          should: [
-            { match: { "partes.nome": user.name } }
-          ],
-          minimum_should_match: 1
+    async function scanTribunal(tribunal) {
+      const url = `https://api-publica.datajud.cnj.jus.br/api_publica_${tribunal}/_search`;
+      const query = {
+        size: 30,
+        query: {
+          bool: {
+            should: [
+              { match: { "partes.nome": user.name } }
+            ],
+            minimum_should_match: 1
+          }
         }
+      };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `APIKey ${apiKey}`
+          },
+          body: JSON.stringify(query),
+          signal: controller.signal
+        });
+
+        if (!response.ok) return { tribunal, hits: [] };
+
+        const data = await response.json();
+        return { tribunal, hits: data.hits?.hits || [] };
+      } catch {
+        return { tribunal, hits: [] };
+      } finally {
+        clearTimeout(timeoutId);
       }
-    };
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `APIKey ${apiKey}`
-        },
-        body: JSON.stringify(query),
-        signal: controller.signal
-      });
-
-      if (!response.ok) return { tribunal, hits: [] };
-
-      const data = await response.json();
-      return { tribunal, hits: data.hits?.hits || [] };
-    } catch {
-      return { tribunal, hits: [] };
-    } finally {
-      clearTimeout(timeoutId);
     }
-  }
 
-  const results = [];
-  for (const tribunal of tribunals) {
-    results.push({ status: 'fulfilled', value: await scanTribunal(tribunal) });
-  }
-
-  let totalFound = 0;
-  const tribunalsWithResults = [];
-
-  for (const result of results) {
-    if (result.status !== 'fulfilled') continue;
-
-    const { tribunal, hits } = result.value;
-
-    if (hits.length === 0) continue;
-    tribunalsWithResults.push(tribunal.toUpperCase());
-
-    for (const hit of hits) {
-      const src = hit._source;
-      const movimentos = src.movimentos || [];
-
-      // Procura movimento que contenha "nomea" no nome (nomeação judicial)
-      const nomeacaoMov = movimentos.find(m =>
-        m.nome && (
-          m.nome.toLowerCase().includes('nomea') ||
-          m.nome.toLowerCase().includes('perito') ||
-          m.nome.toLowerCase().includes('honorário')
-        )
-      );
-
-      if (!nomeacaoMov) continue;
-
-      const itemId = `radar_${user.email.replace(/[^a-zA-Z0-9]/g, '_')}_${src.numeroProcesso.replace(/[^0-9]/g, '')}`;
-      if (existingIds.has(itemId)) continue;
-
-      const parts = (src.partes || []).map(p => ({
-        nome: p.pessoa ? p.pessoa.nome : (p.nome || ''),
-        polo: p.polo || ''
-      }));
-
-      const complementos = nomeacaoMov.complementosTabelados
-        ? nomeacaoMov.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join('; ')
-        : '';
-
-      const trecho = `${nomeacaoMov.nome}${complementos ? ' - ' + complementos : ''}`;
-
-      radarData.push({
-        id: itemId,
-        userEmail: user.email,
-        numeroProcesso: src.numeroProcesso,
-        tribunal: tribunal,
-        diario: `Diário da Justiça - ${tribunal.toUpperCase()}`,
-        dataPublicacao: nomeacaoMov.dataHora ? nomeacaoMov.dataHora.slice(0, 10) : new Date().toISOString().slice(0, 10),
-        trecho: trecho,
-        honorariosSugeridos: null,
-        objetoSugerido: 'Nomeação Judicial',
-        linkPublicacao: `https://www.cnj.jus.br/processo/${src.numeroProcesso}`,
-        imported: false
-      });
-
-      existingIds.add(itemId);
-      totalFound++;
+    const results = [];
+    for (const tribunal of tribunals) {
+      results.push({ status: 'fulfilled', value: await scanTribunal(tribunal) });
     }
+
+    let totalFound = 0;
+    const tribunalsWithResults = [];
+    const newItems = [];
+
+    for (const result of results) {
+      if (result.status !== 'fulfilled') continue;
+
+      const { tribunal, hits } = result.value;
+
+      if (hits.length === 0) continue;
+      tribunalsWithResults.push(tribunal.toUpperCase());
+
+      for (const hit of hits) {
+        const src = hit._source;
+        const movimentos = src.movimentos || [];
+
+        // Procura movimento que contenha "nomea" no nome (nomeação judicial)
+        const nomeacaoMov = movimentos.find(m =>
+          m.nome && (
+            m.nome.toLowerCase().includes('nomea') ||
+            m.nome.toLowerCase().includes('perito') ||
+            m.nome.toLowerCase().includes('honorário')
+          )
+        );
+
+        if (!nomeacaoMov) continue;
+
+        const itemId = `radar_${user.email.replace(/[^a-zA-Z0-9]/g, '_')}_${src.numeroProcesso.replace(/[^0-9]/g, '')}`;
+        if (existingIds.has(itemId)) continue;
+
+        const complementos = nomeacaoMov.complementosTabelados
+          ? nomeacaoMov.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join('; ')
+          : '';
+
+        const trecho = `${nomeacaoMov.nome}${complementos ? ' - ' + complementos : ''}`;
+
+        newItems.push({
+          id: itemId,
+          userEmail: user.email,
+          numeroProcesso: src.numeroProcesso,
+          tribunal: tribunal,
+          diario: `Diário da Justiça - ${tribunal.toUpperCase()}`,
+          dataPublicacao: nomeacaoMov.dataHora ? nomeacaoMov.dataHora.slice(0, 10) : new Date().toISOString().slice(0, 10),
+          trecho: trecho,
+          honorariosSugeridos: null,
+          objetoSugerido: 'Nomeação Judicial',
+          linkPublicacao: `https://www.cnj.jus.br/processo/${src.numeroProcesso}`,
+          imported: false
+        });
+
+        existingIds.add(itemId);
+        totalFound++;
+      }
+    }
+
+    if (newItems.length > 0) {
+      await db.insertRadarItems(newItems);
+    }
+
+    const userItems = await db.getRadarForUser(user.email);
+
+    res.json({
+      found: totalFound,
+      tribunalsScanned: tribunals.length,
+      tribunalsWithResults: tribunalsWithResults,
+      items: userItems,
+      lastScan: new Date().toISOString()
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha interna ao varrer tribunais no radar.' });
   }
-
-  saveRadar(radarData);
-
-  const userItems = radarData.filter(r => r.userEmail === user.email && !r.imported);
-
-  res.json({
-    found: totalFound,
-    tribunalsScanned: tribunals.length,
-    tribunalsWithResults: tribunalsWithResults,
-    items: userItems,
-    lastScan: new Date().toISOString()
-  });
 });
 
 // Rota de proxy para consultas à API do Datajud (PROTEGIDA)
@@ -919,10 +859,20 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`================================================================`);
-  console.log(`🚀 Monitor de Processos Judiciais iniciado com sucesso!`);
-  console.log(`💻 Acesse localmente em: http://localhost:${PORT}`);
-  console.log(`⚙️  Hospedagem configurada. Porta ativa: ${PORT}`);
-  console.log(`================================================================`);
+// Inicializa o banco de dados (Supabase/Local) e depois escuta na porta correspondente
+async function startServer() {
+  await db.initDb();
+  
+  app.listen(PORT, () => {
+    console.log(`================================================================`);
+    console.log(`🚀 Monitor de Processos Judiciais iniciado com sucesso!`);
+    console.log(`💻 Acesse localmente em: http://localhost:${PORT}`);
+    console.log(`⚙️  Hospedagem configurada. Porta ativa: ${PORT}`);
+    console.log(`================================================================`);
+  });
+}
+
+startServer().catch(err => {
+  console.error('Falha crítica ao iniciar o servidor:', err);
+  process.exit(1);
 });
