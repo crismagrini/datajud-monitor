@@ -926,7 +926,6 @@ function setupEventListeners() {
     document.getElementById('import-file-input').click();
   });
   document.getElementById('import-file-input').addEventListener('change', importData);
-  document.getElementById('btn-clear-all-data').addEventListener('click', clearAllLocalData);
 
   // Gatilho de Upload do PDF
   document.getElementById('btn-upload-pdf-trigger').addEventListener('click', () => {
