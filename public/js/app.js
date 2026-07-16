@@ -744,6 +744,12 @@ function setupEventListeners() {
   // Abrir Cadastro de Processo (FAB)
   document.getElementById('btn-add-process-fab').addEventListener('click', () => openDialog('register-process-dialog'));
   
+  // Abrir Cadastro pelo cabeçalho
+  const btnAddHeader = document.getElementById('btn-add-process-header');
+  if (btnAddHeader) {
+    btnAddHeader.addEventListener('click', () => openDialog('register-process-dialog'));
+  }
+  
   // Abrir Cadastro pelo estado vazio
   document.getElementById('btn-empty-add').addEventListener('click', () => openDialog('register-process-dialog'));
   
@@ -830,10 +836,39 @@ function setupEventListeners() {
     }
   });
 
-  // Filtro de processos em tempo real
-  document.getElementById('filter-monitored').addEventListener('input', async (e) => {
-    await renderDashboard(e.target.value.trim());
-  });
+  // Filtro de processos em tempo real e atalho de busca automática
+  const filterInput = document.getElementById('filter-monitored');
+  if (filterInput) {
+    filterInput.addEventListener('input', async (e) => {
+      await renderDashboard(e.target.value.trim());
+    });
+    filterInput.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') {
+        const val = e.target.value.trim();
+        const cleanVal = val.replace(/[^0-9]/g, '');
+        if (cleanVal.length === 20) {
+          // Preenche o modal de cadastro e abre ele!
+          document.getElementById('reg-process-number').value = val;
+          openDialog('register-process-dialog');
+          
+          // E limpa o filtro local para a tela ficar limpa quando fechar
+          e.target.value = '';
+          await renderDashboard();
+          
+          // Garante que a busca automática esteja ativa
+          const autoSearchToggle = document.getElementById('reg-auto-search');
+          if (autoSearchToggle) autoSearchToggle.checked = true;
+          const manualContainer = document.getElementById('manual-form-container');
+          if (manualContainer) manualContainer.style.display = 'none';
+          
+          // Dispara o clique de cadastrar automaticamente para iniciar a busca!
+          setTimeout(() => {
+            document.getElementById('btn-confirm-register').click();
+          }, 150);
+        }
+      }
+    });
+  }
 
   // Toggle de exibição de arquivados
   document.getElementById('toggle-show-archived').addEventListener('change', async () => {

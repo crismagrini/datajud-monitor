@@ -205,8 +205,14 @@
       <div class="dashboard-section" id="section-dash-processes">
         <!-- Filtro e Lista de Processos -->
         <div class="process-section">
-          <div class="section-header" style="flex-wrap: wrap; gap: 12px; justify-content: space-between;">
-            <h2>Seus Processos</h2>
+          <div class="section-header" style="flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 16px;">
+              <h2 style="margin: 0;">Seus Processos</h2>
+              <button class="md-btn md-btn-primary" id="btn-add-process-header" style="gap: 8px; height: 40px; padding: 0 16px; border-radius: 8px;">
+                <span class="material-symbols-rounded">add</span>
+                <span>Cadastrar Processo</span>
+              </button>
+            </div>
             <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
               <div class="search-box">
                 <span class="material-symbols-rounded search-icon">search</span>
@@ -348,8 +354,8 @@
       
     </main>
     
-    <!-- Floating Action Button (FAB M3) -->
-    <button class="md-fab" id="btn-add-process-fab" title="Cadastrar novo processo">
+    <!-- Floating Action Button (FAB M3) - Ocultado para focar no botão central e do cabeçalho -->
+    <button class="md-fab" id="btn-add-process-fab" title="Cadastrar novo processo" style="display: none !important;">
       <span class="material-symbols-rounded">add</span>
       <span>Cadastrar Processo</span>
     </button>
