@@ -736,6 +736,11 @@ app.post('/api/extract-pdf-metadata', authenticateToken, async (req, res) => {
     objetoPericia: 'Não localizado',
     cidadeEstado: 'Não localizado',
     inversaoOnus: 'Não informado',
+    honorarios: null,
+    honorariosUfesp: null,
+    depositoJudicial: 'Não informado',
+    dataHonorarios: null,
+    dataDeposito: null,
     todasPartes: []
   };
 
@@ -744,18 +749,23 @@ app.post('/api/extract-pdf-metadata', authenticateToken, async (req, res) => {
   }
 
   const prompt = `
-Analise o seguinte trecho inicial de um processo judicial brasileiro e extraia as seguintes informações em formato JSON estruturado:
-1. "autor": Nome completo do Autor (Polo Ativo).
-2. "reu": Nome completo do Réu (Polo Passivo).
-3. "perito": Nome completo do Perito Judicial nomeado, se houver menção à sua nomeação (ex: "Dr. João Silva"). Caso contrário, retornar "Não nomeado".
-4. "justicaGratuita": "Sim" se houver menção clara de concessão de justiça gratuita / benefício da gratuidade de justiça / benefício da JG. Caso contrário, "Não". Se não houver menção, "Não informado".
-5. "objetoPericia": Resumo sumário (máximo de 15 palavras) do objeto técnico da perícia ou disputa técnica (ex: "Apurar suposto erro em cirurgia bariátrica", "Recálculo de verbas rescisórias trabalhistas", "Avaliação de benfeitorias em imóvel").
+Analise o seguinte trecho inicial e selecionado de um processo judicial brasileiro e extraia as seguintes informações em formato JSON estruturado:
+1. "autor": Nome completo do Requerente (Polo Ativo).
+2. "reu": Nome completo do Requerido (Polo Passivo).
+3. "perito": Nome completo do Perito Judicial nomeado, se houver menção à sua nomeação (ex: "Dr. João Silva"). Caso contrário, retornar "Não nomeado". Faça uma análise das decisões no texto para localizar o nome.
+4. "justicaGratuita": "Sim" se houver menção clara de concessão de justiça gratuita / benefício da gratuidade de justiça / JG. Caso contrário, "Não". Se não houver menção, "Não informado".
+5. "objetoPericia": Resumo sumário (máximo de 15 palavras) do objeto técnico da perícia ou disputa técnica (ex: "Apurar suposto erro em cirurgia bariátrica").
 6. "cidadeEstado": Cidade e Estado da comarca/foro deste processo (ex: "Ribeirão Preto/SP").
-7. "inversaoOnus": "Sim" se houver pedido ou decisão explícita de inversão do ônus da prova. "Não" se expressamente indeferido/afastado. Se não houver menção, "Não informado".
-8. "todasPartes": Array de objetos com os integrantes do polo ativo e passivo que constam no texto, no formato [{"nome": "...", "polo": "ATIVO"}, {"nome": "...", "polo": "PASSIVO"}].
+7. "inversaoOnus": "Sim" se houver pedido ou decisão explícita de inversão do ônus da prova. "Não" se indeferido/afastado. Se não houver menção, "Não informado".
+8. "honorarios": Valor total fixado ou proposto em BRL (float/int). Se não localizado, null.
+9. "honorariosUfesp": Valor total em UFESPs, se fixado em UFESPs (float/int). Se não localizado, null.
+10. "depositoJudicial": "Sim" ou "Não" ou "Parcial" ou "Não informado" (status do depósito de honorários).
+11. "dataHonorarios": Data da decisão de fixação ou petição de proposta de honorários (YYYY-MM-DD). Se não, null.
+12. "dataDeposito": Data em que foi feito o depósito judicial (YYYY-MM-DD). Se não, null.
+13. "todasPartes": Array de objetos com os integrantes do polo ativo e passivo que constam no texto, no formato [{"nome": "...", "polo": "ATIVO"}, {"nome": "...", "polo": "PASSIVO"}].
 
 Retorne APENAS o JSON puro, sem blocos de código markdown ou explicações. Exemplo de retorno:
-{"autor": "...", "reu": "...", "perito": "...", "justicaGratuita": "...", "objetoPericia": "...", "cidadeEstado": "...", "inversaoOnus": "...", "todasPartes": [{"nome": "...", "polo": "ATIVO"}]}
+{"autor": "...", "reu": "...", "perito": "...", "justicaGratuita": "...", "objetoPericia": "...", "cidadeEstado": "...", "inversaoOnus": "...", "honorarios": null, "honorariosUfesp": null, "depositoJudicial": "...", "dataHonorarios": null, "dataDeposito": null, "todasPartes": [{"nome": "...", "polo": "ATIVO"}]}
 
 Texto do processo:
 ${textSample}
@@ -775,8 +785,13 @@ ${textSample}
         perito: parsed.perito || expertInfo.perito,
         justicaGratuita: parsed.justicaGratuita || expertInfo.justicaGratuita,
         objetoPericia: parsed.objetoPericia || expertInfo.objetoPericia,
-        cidadeEstado: parsed.cidadeEstado || expertInfo.cidadeEstado,
+        cidadeEstado: parsed.comarca || parsed.cidadeEstado || expertInfo.cidadeEstado,
         inversaoOnus: parsed.inversaoOnus || expertInfo.inversaoOnus,
+        honorarios: parsed.honorarios || null,
+        honorariosUfesp: parsed.honorariosUfesp || null,
+        depositoJudicial: parsed.depositoJudicial || expertInfo.depositoJudicial,
+        dataHonorarios: parsed.dataHonorarios || null,
+        dataDeposito: parsed.dataDeposito || null,
         todasPartes: parsed.todasPartes || []
       };
       console.log(`[Metadata Extractor] Ficha técnica extraída com sucesso para o Expert:`, expertInfo);
@@ -809,10 +824,44 @@ app.post('/api/analyze-process', authenticateToken, async (req, res) => {
   }
 
   let pdfText = processData.pdfText;
-  const maxLength = 25000; // ~6k tokens, ideal para manter margem folgada dentro dos 12.000 TPM da Groq
+  const maxLength = 35000; // Limite aumentado para análise profunda com trechos de contexto
   if (pdfText && pdfText.length > maxLength) {
-    console.log(`[IA] Truncando texto do PDF de ${pdfText.length} para ${maxLength} caracteres para evitar limite de tokens por minuto (TPM) da API.`);
-    pdfText = pdfText.slice(0, maxLength) + '\n\n[... TEXTO DO PDF TRUNCADO PELO MONITOR PARA ATENDER OS LIMITES DE VOLUME DA IA ...]';
+    console.log(`[IA] PDF muito grande (${pdfText.length} caracteres). Aplicando filtro inteligente de trechos relevantes...`);
+    
+    // Preserva os primeiros 8.000 caracteres (capa/foro/partes)
+    const headerText = pdfText.substring(0, 8000);
+    
+    // Restante do texto
+    const remainingText = pdfText.substring(8000);
+    const lines = remainingText.split('\n');
+    const keywords = ['perito', 'nomeio', 'nomeação', 'honorários', 'depósito', 'gratuita', 'ônus', 'inversão', 'ufesp', 'arbitro', 'laudo'];
+    
+    let relevantExcerpts = [];
+    let currentLength = headerText.length;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.length < 10) continue;
+      
+      const lineLower = line.toLowerCase();
+      const hasKeyword = keywords.some(kw => lineLower.includes(kw));
+      
+      if (hasKeyword) {
+        const prevLine = i > 0 ? lines[i-1].trim() : '';
+        const nextLine = i < lines.length - 1 ? lines[i+1].trim() : '';
+        const block = `\n[Trecho relevante linha ${i}]:\n${prevLine ? prevLine + '\n' : ''}${line}\n${nextLine ? nextLine + '\n' : ''}`;
+        
+        if (currentLength + block.length < maxLength) {
+          relevantExcerpts.push(block);
+          currentLength += block.length;
+        } else {
+          break;
+        }
+      }
+    }
+    
+    pdfText = `${headerText}\n\n--- [TRECHOS SELECIONADOS DA ANÁLISE DO PROCESSO] ---\n\n${relevantExcerpts.join('\n\n')}`;
+    console.log(`[IA] Filtro concluído. Novo tamanho enviado: ${pdfText.length} caracteres.`);
   }
 
   // Prompts estruturados focados em Peritos Judiciais e Assistentes Técnicos (CPC/2015)
@@ -822,14 +871,16 @@ Seu foco principal é auxiliar Peritos Judiciais e Assistentes Técnicos (Auxili
 
 Sua tarefa é analisar o texto extraído da cópia integral de um processo em PDF e gerar as seguintes informações:
 1. Um parecer/relatório analítico detalhado em português (formato Markdown).
-2. O nome do perito nomeado e se houve ou não a inversão do ônus da prova.
-3. Informações financeiras da perícia: o valor de honorários arbitrados ou propostos, se o depósito judicial correspondente foi efetuado pelas partes responsáveis e a data de fixação/proposta dos honorários.
-4. Uma lista estruturada (JSON array) contendo os prazos processuais (deadlines) calculados.
+2. O nome completo do perito nomeado (analise profundamente as decisões judiciais para encontrar o nome do perito nomeado de fato, não ignore).
+3. Informações financeiras da perícia: o valor de honorários arbitrados ou propostos, se o depósito judicial correspondente foi efetuado pelas partes responsáveis, a data de fixação/proposta dos honorários e a data do depósito judicial correspondente (se houver).
+4. Indicação de concessão de Justiça Gratuita e de Inversão do Ônus da Prova (da Causa).
+5. Uma lista estruturada (JSON array) contendo os prazos processuais (deadlines) calculados.
 
 INSTRUÇÕES IMPORTANTES PARA O PARECER:
 - Baseie sua análise estritamente no texto do PDF fornecido. Jamais invente fatos, nomes ou dados fictícios.
-- Identifique os prazos críticos aplicáveis ao Perito do juízo ou Assistentes Técnicos das partes (Proposta de honorários, escusa, resposta a esclarecimentos, entrega de laudo, parecer técnico discordante/concordante).
+- Identifique os prazos críticos aplicáveis ao Perito do juízo ou Assistentes Técnicos (Proposta de honorários, escusa, resposta a esclarecimentos, entrega de laudo, parecer técnico discordante/concordante).
 - O parecer deve ser em português claro e bem estruturado.
+- Chame as partes de Requerente (polo ativo) e Requerido (polo passivo).
 
 INSTRUÇÕES IMPORTANTES PARA OS PRAZOS (DEADLINES):
 - Para cada prazo encontrado ou aplicável, determine uma data limite real (formato YYYY-MM-DD). Calcule a data limite com base nas datas de intimação ou publicação citadas no PDF (use apenas dias úteis para o cálculo, pulando finais de semana e feriados nacionais, seguindo o CPC/2015). Se a data da intimação ou publicação do prazo específico não constar no texto, estime a data limite com base no andamento mais recente dos autos ou use como referência o dia de hoje (${new Date().toLocaleDateString('pt-BR')}).
@@ -837,11 +888,16 @@ INSTRUÇÕES IMPORTANTES PARA OS PRAZOS (DEADLINES):
 Você deve responder APENAS com um objeto JSON válido, sem qualquer texto de introdução ou conclusão. O JSON deve ter exatamente a seguinte estrutura:
 {
   "analysis": "### 📋 Resumo da Demanda (Objeto da Lide)...\\n\\n### ⚖️ Histórico de Atuação da Perícia...\\n\\n### ⚠️ Alerta de Prazos do Expert (CPC/2015)...\\n\\n### 🚀 Recomendações e Próximos Passos...",
-  "perito": "Nome do perito judicial nomeado (se houver menção nos autos, ex: 'Dr. João Silva'). Caso contrário, retorne 'Não nomeado'.",
+  "perito": "Nome do perito judicial nomeado (se houver menção nos autos, ex: 'Dr. João Silva'). Caso contrário, retorne 'Não nomeado'. Faça uma análise detalhada das decisões judiciais no texto para extrair o nome.",
+  "justicaGratuita": "Sim ou Não ou Não informado",
   "inversaoOnus": "Sim ou Não ou Não informado",
-  "honorarios": 4500.00, // Retorne apenas o número (float/int) do valor fixado pelo juiz ou proposto pelo perito se localizado. Se não localizado, retorne null.
+  "comarca": "Nome da comarca/foro deste processo (ex: 'Foro de Jundiaí/SP').",
+  "objetoPericia": "Resumo sumário (máximo de 15 palavras) do objeto técnico da perícia ou disputa técnica (ex: 'Apurar suposto erro em cirurgia bariátrica').",
+  "honorarios": 4500.00, // Retorne apenas o número (float/int) do valor fixado pelo juiz ou proposto pelo perito se localizado em BRL. Se não localizado, retorne null.
+  "honorariosUfesp": 15, // Se os honorários foram fixados em UFESPs, informe a quantidade de UFESPs aqui. Caso contrário, retorne null.
   "depositoJudicial": "Sim ou Não ou Parcial ou Não informado", // Indique se foi efetuado o depósito judicial do valor dos honorários
   "dataHonorarios": "YYYY-MM-DD", // A data em que ocorreu a decisão fixando os honorários ou a petição de proposta. Se não localizado, retorne null.
+  "dataDeposito": "YYYY-MM-DD", // A data em que foi efetuado o depósito judicial do valor dos honorários pelas partes. Se não localizado, retorne null.
   "resumoProcesso": "Resumo curto (máximo 45 palavras) sobre a nomeação do perito e proposta de honorários, detalhando se a proposta foi aceita/homologada ou se houve arbitramento de valores pelo juiz.",
   "deadlines": [
     {
@@ -875,9 +931,14 @@ ${pdfText}
       deadlines: parsed.deadlines || [],
       perito: parsed.perito || 'Não nomeado',
       inversaoOnus: parsed.inversaoOnus || 'Não informado',
+      justicaGratuita: parsed.justicaGratuita || 'Não informado',
+      cidadeEstado: parsed.comarca || parsed.cidadeEstado || 'Não localizado',
+      objetoPericia: parsed.objetoPericia || 'Não localizado',
       honorarios: parsed.honorarios || null,
+      honorariosUfesp: parsed.honorariosUfesp || null,
       depositoJudicial: parsed.depositoJudicial || 'Não informado',
       dataHonorarios: parsed.dataHonorarios || null,
+      dataDeposito: parsed.dataDeposito || null,
       resumoProcesso: parsed.resumoProcesso || 'Não localizado'
     });
   } catch (error) {

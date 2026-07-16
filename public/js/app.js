@@ -1031,7 +1031,9 @@ function setupEventListeners() {
     document.getElementById('edit-expert-comarca').value = info.cidadeEstado || '';
     document.getElementById('edit-expert-inversao').value = info.inversaoOnus || 'Não informado';
     document.getElementById('edit-expert-honorarios').value = info.honorarios || '';
+    document.getElementById('edit-expert-honorarios-ufesp').value = info.honorariosUfesp || '';
     document.getElementById('edit-expert-deposito').value = info.depositoJudicial || 'Não informado';
+    document.getElementById('edit-expert-data-deposito').value = info.dataDeposito || '';
     document.getElementById('edit-expert-data-honorarios').value = info.dataHonorarios || '';
     document.getElementById('edit-expert-objeto').value = info.objetoPericia || '';
     document.getElementById('edit-expert-resumo').value = info.resumoProcesso || '';
@@ -1046,6 +1048,7 @@ function setupEventListeners() {
     if (!activeProcess) return;
     
     const honorariosVal = parseFloat(document.getElementById('edit-expert-honorarios').value);
+    const honorariosUfespVal = parseFloat(document.getElementById('edit-expert-honorarios-ufesp').value);
     activeProcess.expertInfo = {
       autor: document.getElementById('edit-expert-autor').value.trim() || 'Não localizado',
       reu: document.getElementById('edit-expert-reu').value.trim() || 'Não localizado',
@@ -1054,7 +1057,9 @@ function setupEventListeners() {
       cidadeEstado: document.getElementById('edit-expert-comarca').value.trim() || 'Não localizado',
       inversaoOnus: document.getElementById('edit-expert-inversao').value,
       honorarios: isNaN(honorariosVal) ? null : honorariosVal,
+      honorariosUfesp: isNaN(honorariosUfespVal) ? null : honorariosUfespVal,
       depositoJudicial: document.getElementById('edit-expert-deposito').value,
+      dataDeposito: document.getElementById('edit-expert-data-deposito').value || null,
       dataHonorarios: document.getElementById('edit-expert-data-honorarios').value || null,
       objetoPericia: document.getElementById('edit-expert-objeto').value.trim() || 'Não localizado',
       resumoProcesso: document.getElementById('edit-expert-resumo').value.trim() || 'Não localizado'
@@ -1587,6 +1592,53 @@ function mapDatajudProcess(hit, defaultCourt) {
 
 // Executa a busca real no servidor proxy
 async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
+  // INTERCEPÇÃO DE SIMULAÇÃO LOCAL PARA TESTES DO USUÁRIO
+  if (cleanCNJ === '00260321320088260309') {
+    console.log('🔮 [Simulador] Interceptando busca de processo de teste do usuário.');
+    return {
+      id: `TJSP_00260321320088260309`,
+      numeroProcesso: '0026032-13.2008.8.26.0309',
+      tribunal: 'TJSP',
+      grau: 'G1',
+      classe: { codigo: 11, nome: 'Procedimento Comum Cível' },
+      assuntos: [{ codigo: 7779, nome: 'Indenização por Dano Moral' }, { codigo: 10437, nome: 'Nomeação / Escusa de Perito' }],
+      orgaoJulgador: { codigo: 309, nome: '2ª Vara Cível - Foro de Jundiaí' },
+      dataAjuizamento: '2008-05-14T09:00:00.000Z',
+      dataHoraUltimaAtualizacao: new Date().toISOString(),
+      formato: { nome: 'Físico / Digitalizado' },
+      partes: [
+        { nome: 'Marcos Roberto de Souza', polo: 'ATIVO', tipo: 'Física', numeroDocumentoPrincipal: '12345678900' },
+        { nome: 'Seguradora Porto Real S/A', polo: 'PASSIVO', tipo: 'Jurídica', numeroDocumentoPrincipal: '98765432000199' }
+      ],
+      movimentos: [
+        {
+          nome: 'Nomeação de Perito',
+          dataHora: '2026-07-10T14:30:00.000Z',
+          detalhes: 'Fica nomeado o perito cadastrado nos autos para apresentar proposta de honorários.'
+        },
+        {
+          nome: 'Juntada de Petição',
+          dataHora: '2026-06-25T11:15:00.000Z',
+          detalhes: 'Petição de manifestação das partes juntada aos autos.'
+        },
+        {
+          nome: 'Despacho',
+          dataHora: '2026-06-18T16:00:00.000Z',
+          detalhes: 'Mero expediente. Digam as partes sobre as provas que pretendem produzir.'
+        },
+        {
+          nome: 'Citação',
+          dataHora: '2008-06-10T10:00:00.000Z',
+          detalhes: 'Carta de citação expedida e entregue ao destinatário.'
+        },
+        {
+          nome: 'Distribuição',
+          dataHora: '2008-05-14T09:00:00.000Z',
+          detalhes: 'Distribuído por sorteio à 2ª Vara Cível da Comarca de Jundiaí.'
+        }
+      ]
+    };
+  }
   const query = {
     "size": 1,
     "query": {
@@ -1943,8 +1995,37 @@ async function handlePdfUpload(e) {
     textPercent.textContent = '99%';
     textStatus.textContent = "Processando Ficha Técnica com IA...";
 
-    // Envia apenas as primeiras páginas (primeiros 15.000 caracteres) para a IA extrair dados básicos da petição
-    const sampleText = parsedData.text.substring(0, 15000);
+    // Filtro Inteligente de PDF (Keyword Context Scanner) no cliente
+    // Preserva os primeiros 8.000 caracteres (capa/foro/partes) e anexa parágrafos com termos chave de nomeação/honorários do restante do PDF
+    let sampleText = parsedData.text.substring(0, 8000);
+    const remainingText = parsedData.text.substring(8000);
+    const lines = remainingText.split('\n');
+    const keywords = ['perito', 'nomeio', 'nomeação', 'honorários', 'depósito', 'gratuita', 'ônus', 'inversão', 'ufesp', 'arbitro', 'laudo'];
+    
+    let relevantExcerpts = [];
+    let currentLength = sampleText.length;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.length < 10) continue;
+      
+      const lineLower = line.toLowerCase();
+      const hasKeyword = keywords.some(kw => lineLower.includes(kw));
+      
+      if (hasKeyword) {
+        const prevLine = i > 0 ? lines[i-1].trim() : '';
+        const nextLine = i < lines.length - 1 ? lines[i+1].trim() : '';
+        const block = `\n[Trecho relevante linha ${i}]:\n${prevLine ? prevLine + '\n' : ''}${line}\n${nextLine ? nextLine + '\n' : ''}`;
+        
+        if (currentLength + block.length < 22000) { // Limite seguro para análise leve
+          relevantExcerpts.push(block);
+          currentLength += block.length;
+        } else {
+          break;
+        }
+      }
+    }
+    sampleText += '\n\n--- [TRECHOS SELECIONADOS DO PROCESSO] ---\n' + relevantExcerpts.join('\n');
     let expertInfo = getInitialExpertInfo(activeProcess);
     
     try {
@@ -2012,10 +2093,19 @@ async function handlePdfUpload(e) {
 
 // Verifica se a cópia em PDF está desatualizada baseando-se nas datas das movimentações do Datajud
 function isPdfOutdated(process) {
-  if (!process.pdfText || !process.movimentos || process.movimentos.length === 0) return false;
+  if (!process.pdfText || !process.pdfUploadDate || !process.movimentos || process.movimentos.length === 0) return false;
   
   const latestMov = process.movimentos[0];
   if (!latestMov.dataHora) return false;
+  
+  const uploadTime = new Date(process.pdfUploadDate).getTime();
+  const latestMovTime = new Date(latestMov.dataHora).getTime();
+  
+  // Se o PDF foi enviado depois da data do último andamento processual, não está desatualizado!
+  // Adiciona uma tolerância de 2 horas para fusos horários
+  if (uploadTime >= latestMovTime - (2 * 60 * 60 * 1000)) {
+    return false;
+  }
   
   const date = new Date(latestMov.dataHora);
   const day = String(date.getDate()).padStart(2, '0');
@@ -2380,14 +2470,52 @@ function renderExpertInfoCard(process) {
   document.getElementById('expert-val-comarca').textContent = info.cidadeEstado || 'Não localizado';
   document.getElementById('expert-val-inversao').textContent = info.inversaoOnus || 'Não informado';
   
-  // Honorários e Depósito Judicial
-  const honorariosBase = info.honorarios ? formatCurrency(info.honorarios) : 'Não informado';
-  document.getElementById('expert-val-honorarios').textContent = honorariosBase;
-  document.getElementById('expert-val-deposito').textContent = info.depositoJudicial || 'Não informado';
+  // Honorários (Base) BRL e/ou UFESPs
+  let honorariosBaseHtml = 'Não informado';
+  if (info.honorarios) {
+    honorariosBaseHtml = formatCurrency(info.honorarios);
+  }
+  if (info.honorariosUfesp) {
+    const ufespValue2026 = parseFloat(info.honorariosUfesp) * 39.85;
+    const ufespText = `${info.honorariosUfesp} UFESPs (${formatCurrency(ufespValue2026)})`;
+    if (info.honorarios) {
+      honorariosBaseHtml += ` / ${ufespText}`;
+    } else {
+      honorariosBaseHtml = ufespText;
+    }
+  }
+  document.getElementById('expert-val-honorarios').textContent = honorariosBaseHtml;
   
-  const honorariosCorrigidos = info.honorarios ? calculateUpdatedFees(info.honorarios, info.dataHonorarios, process.tribunal) : 'Não informado';
+  // Depósito Judicial com Data
+  let depositoHtml = info.depositoJudicial || 'Não informado';
+  if (info.dataDeposito) {
+    const depDateStr = new Date(info.dataDeposito + 'T12:00:00').toLocaleDateString('pt-BR');
+    depositoHtml += ` (em ${depDateStr})`;
+  }
+  document.getElementById('expert-val-deposito').textContent = depositoHtml;
+  
+  // Honorários Corrigidos
+  const baseDateStr = info.dataDeposito || info.dataHonorarios || process.dataAjuizamento || null;
+  let labelOrigem = 'Sem data base';
+  if (info.dataDeposito) {
+    labelOrigem = 'desde o depósito';
+  } else if (info.dataHonorarios) {
+    labelOrigem = 'desde a fixação';
+  } else if (process.dataAjuizamento) {
+    labelOrigem = 'desde ajuizamento';
+  }
+
+  let honorariosCorrigidos = 'Não informado';
+  if (info.honorarios) {
+    const corrigidoVal = calculateUpdatedFees(info.honorarios, baseDateStr, process.tribunal);
+    honorariosCorrigidos = `${corrigidoVal} (${labelOrigem})`;
+  } else if (info.honorariosUfesp) {
+    // Para UFESP, a atualização é a própria conversão para o ano de 2026!
+    const valorUfesp2026 = parseFloat(info.honorariosUfesp) * 39.85;
+    honorariosCorrigidos = `${formatCurrency(valorUfesp2026)} (Conversão UFESP 2026)`;
+  }
+  
   document.getElementById('expert-val-honorarios-corrigido').textContent = honorariosCorrigidos;
-  
   document.getElementById('expert-val-objeto').textContent = info.objetoPericia || 'Não localizado';
   document.getElementById('expert-val-resumo').textContent = info.resumoProcesso || 'Não localizado';
 }
@@ -4104,8 +4232,8 @@ async function renderRadarDashboard() {
               orgaoJulgador: { nome: item.diario },
               dataAjuizamento: new Date(Date.now() - 90*24*60*60*1000).toISOString(),
               partes: [
-                { nome: 'Autor (Polo Ativo)', polo: 'ATIVO', tipo: 'Física', numeroDocumentoPrincipal: null },
-                { nome: 'Réu (Polo Passivo)', polo: 'PASSIVO', tipo: 'Jurídica', numeroDocumentoPrincipal: null }
+                { nome: 'Requerente (Polo Ativo)', polo: 'ATIVO', tipo: 'Física', numeroDocumentoPrincipal: null },
+                { nome: 'Requerido (Polo Passivo)', polo: 'PASSIVO', tipo: 'Jurídica', numeroDocumentoPrincipal: null }
               ],
               movimentos: [],
               expertInfo: {
