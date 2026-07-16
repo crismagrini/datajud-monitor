@@ -1408,7 +1408,6 @@ async function handleRegisterSubmit() {
     }
   } catch (error) {
     console.error(error);
-    showToast(error.message || 'Erro ao cadastrar o processo.');
     
     // O CNJ falhou ou deu timeout. Abre o formulário manual automaticamente com o tribunal pré-selecionado!
     document.getElementById('reg-auto-search').checked = false;
@@ -1419,7 +1418,11 @@ async function handleRegisterSubmit() {
       document.getElementById('reg-manual-court').value = courtAlias.toUpperCase();
     }
     
-    showToast('A API do Datajud está lenta/instável. O formulário manual foi liberado abaixo com o tribunal pré-selecionado.', 6000);
+    if (error.message.includes('não localizado') || error.message.includes('indisponível')) {
+      showToast('Este processo não foi localizado na base de dados do CNJ. Por favor, insira os dados nos campos manuais abaixo.', 8000);
+    } else {
+      showToast('A API do Datajud está instável ou lenta no momento. O formulário manual foi liberado com o tribunal pré-selecionado.', 8000);
+    }
   } finally {
     btnConfirm.disabled = false;
     btnText.textContent = 'Cadastrar';
