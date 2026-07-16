@@ -2070,7 +2070,7 @@ async function renderDashboard(filterQuery = '') {
   }
 
   if (filtered.length === 0) {
-    if (processes.length === 0) {
+    if (activeProcesses.length === 0) {
       document.getElementById('empty-state-monitored').style.display = 'flex';
     } else {
       listContainer.innerHTML = `
@@ -2078,8 +2078,16 @@ async function renderDashboard(filterQuery = '') {
           <span class="material-symbols-rounded empty-icon">find_in_page</span>
           <h3>Nenhum processo encontrado</h3>
           <p>Nenhum processo cadastrado corresponde aos termos da pesquisa.</p>
+          <button class="md-btn md-btn-primary btn-empty-add-search" style="margin-top: 16px; gap: 8px;">
+            <span class="material-symbols-rounded">add</span>
+            <span>Cadastrar Processo</span>
+          </button>
         </div>
       `;
+      const btnSearchAdd = listContainer.querySelector('.btn-empty-add-search');
+      if (btnSearchAdd) {
+        btnSearchAdd.addEventListener('click', () => openDialog('register-process-dialog'));
+      }
     }
     return;
   }
