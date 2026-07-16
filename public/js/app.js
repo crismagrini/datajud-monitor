@@ -1427,6 +1427,113 @@ async function handleRegisterSubmit() {
   }
 }
 
+// Dicionários auxiliares para resolver códigos do CNJ quando a API não retorna os nomes por extenso
+const CNJ_CLASSES = {
+  11: 'Procedimento Comum Cível',
+  111: 'Execução de Título Extrajudicial',
+  159: 'Cumprimento de Sentença',
+  2: 'Monitória',
+  7: 'Embargos à Execução',
+  119: 'Execução Fiscal',
+  120: 'Despejo',
+  1707: 'Inventário',
+  203: 'Inquérito Policial',
+  156: 'Ação Penal',
+  121: 'Busca e Apreensão em Alienação Fiduciária',
+  1708: 'Arrolamento Comum',
+  1198: 'Procedimento do Juizado Especial Cível',
+  1213: 'Procedimento do Juizado Especial da Fazenda Pública'
+};
+
+const CNJ_ASSUNTOS = {
+  10421: 'Intimação / Notificação',
+  899: 'Espécies de Contratos',
+  9580: 'Prestação de Serviços',
+  10582: 'Honorários Periciais',
+  7779: 'Indenização por Dano Moral',
+  7780: 'Indenização por Dano Material',
+  10437: 'Nomeação / Escusa de Perito',
+  10584: 'Honorários Advocatícios',
+  6017: 'Inadimplemento',
+  4703: 'Cobrança de Tributo',
+  9611: 'Responsabilidade Civil',
+  4823: 'Contratos de Consumo',
+  10418: 'Prazos / Tempestividade'
+};
+
+// Mapeia e normaliza um processo recebido da API Datajud com maior robustez e resiliência a dados vazios
+function mapDatajudProcess(hit, defaultCourt) {
+  const src = hit._source;
+  
+  // Classe processual (com lookup do dicionário CNJ)
+  const classeNome = src.classe?.nome || CNJ_CLASSES[src.classe?.codigo] || 'Classe Não Classificada';
+  const classe = { codigo: src.classe?.codigo, nome: classeNome };
+  
+  // Assuntos (com lookup do dicionário CNJ)
+  const assuntos = (src.assuntos || []).map(a => ({
+    codigo: a.codigo,
+    nome: a.nome || CNJ_ASSUNTOS[a.codigo] || `Assunto #${a.codigo}`
+  }));
+  if (assuntos.length === 0) {
+    assuntos.push({ nome: 'Geral' });
+  }
+
+  // Órgão Julgador
+  const orgaoNome = src.orgaoJulgador?.nome || 'Vara Não Informada';
+  const orgaoJulgador = { codigo: src.orgaoJulgador?.codigo, nome: orgaoNome };
+
+  // Partes (Normaliza se vier em formato flat ou dentro de pessoa, e normaliza o polo/casing)
+  const partes = (src.partes || []).map(p => {
+    const nome = p.nome || p.pessoa?.nome || 'Parte';
+    
+    // Normalização robusta de Polo
+    const pUpper = (p.polo || '').toUpperCase();
+    let polo = 'ATIVO';
+    if (pUpper.includes('PASS') || pUpper.startsWith('PA') || pUpper.startsWith('P')) {
+      polo = 'PASSIVO';
+    }
+
+    // Normalização de Tipo
+    const tipoRaw = (p.tipo || p.pessoa?.tipo || 'Física').toUpperCase();
+    const tipo = (tipoRaw.includes('JURID') || tipoRaw.startsWith('J')) ? 'Jurídica' : 'Física';
+
+    // Captura o documento CPF/CNPJ
+    const docRaw = p.numeroDocumentoPrincipal || p.pessoa?.numeroDocumentoPrincipal || null;
+    const numeroDocumentoPrincipal = docRaw ? docRaw.replace(/[^0-9]/g, '') : null;
+
+    return { nome, polo, tipo, numeroDocumentoPrincipal };
+  });
+
+  // Movimentos (Une os detalhes de complementos e textos de andamento)
+  const movimentos = (src.movimentos || []).map(m => {
+    const complementos = m.complementosTabelados 
+      ? m.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join(', ') 
+      : '';
+    const detalhes = [m.texto, m.complemento, complementos].filter(Boolean).join(' | ') || '';
+    
+    return {
+      nome: m.nome || 'Andamento Processual',
+      dataHora: m.dataHora,
+      detalhes: detalhes
+    };
+  });
+
+  return {
+    id: hit._id || `${src.tribunal}_${src.numeroProcesso}`,
+    numeroProcesso: src.numeroProcesso,
+    tribunal: src.tribunal || defaultCourt?.toUpperCase() || 'TJ',
+    grau: src.grau || 'G1',
+    classe,
+    assuntos,
+    orgaoJulgador,
+    dataAjuizamento: src.dataAjuizamento,
+    dataHoraUltimaAtualizacao: src.dataHoraUltimaAtualizacao,
+    formato: src.formato || { nome: 'Eletrônico' },
+    partes,
+    movimentos
+  };
+}
+
 // Executa a busca real no servidor proxy
 async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
   const query = {
@@ -1467,31 +1574,7 @@ async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
     throw new Error(`Processo não localizado ou indisponível temporariamente na API do tribunal ${courtAlias.toUpperCase()}.`);
   }
 
-  const src = hits[0]._source;
-  
-  return {
-    id: hits[0]._id || `${src.tribunal}_${src.numeroProcesso}`,
-    numeroProcesso: src.numeroProcesso,
-    tribunal: src.tribunal || courtAlias.toUpperCase(),
-    grau: src.grau || 'G1',
-    classe: src.classe || { nome: 'Não classificado' },
-    assuntos: src.assuntos || [],
-    orgaoJulgador: src.orgaoJulgador || { nome: 'Não informado' },
-    dataAjuizamento: src.dataAjuizamento,
-    dataHoraUltimaAtualizacao: src.dataHoraUltimaAtualizacao,
-    formato: src.formato || { nome: 'Eletrônico' },
-    partes: (src.partes || []).map(p => ({
-      nome: p.pessoa ? p.pessoa.nome : (p.nome || 'Parte'),
-      polo: p.polo || 'ATIVO',
-      tipo: p.pessoa ? p.pessoa.tipo : 'Física',
-      numeroDocumentoPrincipal: p.pessoa ? p.pessoa.numeroDocumentoPrincipal : null
-    })),
-    movimentos: (src.movimentos || []).map(m => ({
-      nome: m.nome,
-      dataHora: m.dataHora,
-      detalhes: m.complementosTabelados ? m.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join(', ') : ''
-    }))
-  };
+  return mapDatajudProcess(hits[0], courtAlias);
 }
 
 // Extrai e monta o objeto manual do formulário
@@ -2370,18 +2453,14 @@ async function syncSingleProcessSilently(processNumber) {
     const hits = data.hits?.hits || [];
 
     if (hits.length > 0) {
-      const src = hits[0]._source;
-      const apiUpdate = src.dataHoraUltimaAtualizacao;
-      const apiMovs = src.movimentos?.length || 0;
+      const updatedProc = mapDatajudProcess(hits[0], courtAlias);
+      const apiUpdate = updatedProc.dataHoraUltimaAtualizacao;
+      const apiMovs = updatedProc.movimentos?.length || 0;
       const localMovs = proc.movimentos?.length || 0;
 
       if (apiUpdate !== proc.dataHoraUltimaAtualizacao || apiMovs > localMovs) {
         proc.dataHoraUltimaAtualizacao = apiUpdate;
-        proc.movimentos = (src.movimentos || []).map(m => ({
-          nome: m.nome,
-          dataHora: m.dataHora,
-          detalhes: m.complementosTabelados ? m.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join(', ') : ''
-        }));
+        proc.movimentos = updatedProc.movimentos;
         proc.hasUpdate = true;
         
         await ProcessService.update(proc);
@@ -3345,33 +3424,8 @@ async function handleBatchImport() {
       return;
     }
 
-    // Mapeia os hits para o formato interno do Monitor
-    const mapped = hits.map(hit => {
-      const src = hit._source;
-      return {
-        id: hit._id || `${src.tribunal}_${src.numeroProcesso}`,
-        numeroProcesso: src.numeroProcesso,
-        tribunal: src.tribunal || courtAlias.toUpperCase(),
-        grau: src.grau || 'G1',
-        classe: src.classe || { nome: 'Não classificado' },
-        assuntos: src.assuntos || [],
-        orgaoJulgador: src.orgaoJulgador || { nome: 'Não informado' },
-        dataAjuizamento: src.dataAjuizamento,
-        dataHoraUltimaAtualizacao: src.dataHoraUltimaAtualizacao,
-        formato: src.formato || { nome: 'Eletrônico' },
-        partes: (src.partes || []).map(p => ({
-          nome: p.pessoa ? p.pessoa.nome : (p.nome || 'Parte'),
-          polo: p.polo || 'ATIVO',
-          tipo: p.pessoa ? p.pessoa.tipo : 'Física',
-          numeroDocumentoPrincipal: p.pessoa ? p.pessoa.numeroDocumentoPrincipal : null
-        })),
-        movimentos: (src.movimentos || []).map(m => ({
-          nome: m.nome,
-          dataHora: m.dataHora,
-          detalhes: m.complementosTabelados ? m.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join(', ') : ''
-        }))
-      };
-    });
+    // Mapeia os hits para o formato interno do Monitor usando a nova função
+    const mapped = hits.map(hit => mapDatajudProcess(hit, courtAlias));
 
     // Filtra pelo nome exato ou contido (case-insensitive) e pelo polo especificado
     // A API do Datajud às vezes retorna abreviações ou qualificações (ex: "KLEBER CRISTIANO MAGRINI - PERITO")
