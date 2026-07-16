@@ -1592,7 +1592,7 @@ async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
     body: JSON.stringify({
       tribunal: courtAlias,
       query: query,
-      timeout: 15000 // Timeout aumentado para evitar falhas em conexões lentas do CNJ
+      timeout: 30000 // Timeout de 30 segundos para conexões lentas do CNJ
     })
   });
 
