@@ -237,10 +237,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   populateManualCourts();
   setupEventListeners();
 
+  // Inicia o monitoramento de alarmes periodicamente em segundo plano
+  setInterval(checkActiveAlarms, 15000);
+
   if (isAuthenticated) {
     await renderDashboard();
     // Executa busca automática silenciosa de atualizações no início
     setTimeout(syncAllMonitoredSilently, 2000);
+    // Verificação de alarmes inicial
+    setTimeout(checkActiveAlarms, 3000);
   }
 });
 
@@ -807,6 +812,23 @@ function setupEventListeners() {
 
   // Salvar processo
   document.getElementById('btn-confirm-register').addEventListener('click', handleRegisterSubmit);
+
+  // Salvar edição de tarefa e toggle de alarme
+  document.getElementById('btn-save-task-edit').addEventListener('click', saveTaskEdit);
+  document.getElementById('edit-task-alarm-enable').addEventListener('change', (e) => {
+    const container = document.getElementById('alarm-datetime-picker-container');
+    if (container) container.style.display = e.target.checked ? 'block' : 'none';
+    if (e.target.checked) {
+      const dtInput = document.getElementById('edit-task-alarm-datetime');
+      if (dtInput && !dtInput.value) {
+        const now = new Date();
+        now.setMinutes(now.getMinutes() + 5);
+        const offset = now.getTimezoneOffset();
+        const localNow = new Date(now.getTime() - (offset * 60 * 1000));
+        dtInput.value = localNow.toISOString().slice(0, 16);
+      }
+    }
+  });
 
   // Filtro de processos em tempo real
   document.getElementById('filter-monitored').addEventListener('input', async (e) => {
@@ -2991,6 +3013,13 @@ function renderTasksList() {
 
     const dateLabel = task.date ? new Date(task.date + 'T00:00:00').toLocaleDateString('pt-BR') : 'Sem data';
 
+    let alarmBadge = '';
+    if (task.alarmDate && !task.completed) {
+      const alarmDT = new Date(task.alarmDate);
+      const alarmLabel = `${alarmDT.toLocaleDateString('pt-BR')} ${alarmDT.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+      alarmBadge = `<span class="task-cpc-badge" style="background-color: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); display: inline-flex; align-items: center; gap: 4px;"><span class="material-symbols-rounded" style="font-size: 11px;">alarm</span>${alarmLabel}</span>`;
+    }
+
     item.innerHTML = `
       <input type="checkbox" id="chk-${task.id}" ${task.completed ? 'checked' : ''}>
       <div class="task-checkbox-details">
@@ -2999,11 +3028,17 @@ function renderTasksList() {
         <div class="task-checkbox-badge-row">
           <span class="task-date-badge">${dateLabel}</span>
           ${task.cpcArticle ? `<span class="task-cpc-badge">${task.cpcArticle}</span>` : ''}
+          ${alarmBadge}
         </div>
       </div>
-      <button class="md-btn-icon task-delete-btn" id="del-${task.id}" title="Excluir Tarefa">
-        <span class="material-symbols-rounded" style="font-size: 18px;">delete</span>
-      </button>
+      <div style="display: flex; gap: 4px;">
+        <button class="md-btn-icon task-edit-btn" id="edit-${task.id}" title="Editar Tarefa">
+          <span class="material-symbols-rounded" style="font-size: 18px;">edit</span>
+        </button>
+        <button class="md-btn-icon task-delete-btn" id="del-${task.id}" title="Excluir Tarefa">
+          <span class="material-symbols-rounded" style="font-size: 18px;">delete</span>
+        </button>
+      </div>
     `;
 
     // Toggle de conclusão de tarefa
@@ -3016,6 +3051,13 @@ function renderTasksList() {
         renderCalendarWidget();
         renderTasksList();
       }
+    });
+
+    // Evento de edição
+    const editBtn = item.querySelector('.task-edit-btn');
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openTaskEditDialog(task);
     });
 
     // Evento de deleção
@@ -3032,6 +3074,158 @@ function renderTasksList() {
 
     container.appendChild(item);
   });
+}
+
+function openTaskEditDialog(task) {
+  document.getElementById('edit-task-id').value = task.id;
+  document.getElementById('edit-task-title').value = task.title;
+  document.getElementById('edit-task-desc').value = task.description || '';
+  document.getElementById('edit-task-date').value = task.date || '';
+  
+  const hasAlarm = !!task.alarmDate;
+  document.getElementById('edit-task-alarm-enable').checked = hasAlarm;
+  
+  const pickerContainer = document.getElementById('alarm-datetime-picker-container');
+  const alarmInput = document.getElementById('edit-task-alarm-datetime');
+  
+  if (hasAlarm) {
+    pickerContainer.style.display = 'block';
+    alarmInput.value = task.alarmDate;
+  } else {
+    pickerContainer.style.display = 'none';
+    alarmInput.value = '';
+  }
+  
+  openDialog('task-edit-dialog');
+}
+
+async function saveTaskEdit() {
+  if (!activeProcess) return;
+
+  const taskId = document.getElementById('edit-task-id').value;
+  const title = document.getElementById('edit-task-title').value.trim();
+  const desc = document.getElementById('edit-task-desc').value.trim();
+  const date = document.getElementById('edit-task-date').value;
+  
+  const alarmEnable = document.getElementById('edit-task-alarm-enable').checked;
+  const alarmDatetime = document.getElementById('edit-task-alarm-datetime').value;
+
+  if (!title) {
+    showToast('O título da tarefa é obrigatório.', 3000);
+    return;
+  }
+  if (!date) {
+    showToast('A data de vencimento da tarefa é obrigatória.', 3000);
+    return;
+  }
+
+  const idx = activeProcess.tasks.findIndex(t => t.id === taskId);
+  if (idx === -1) {
+    showToast('Tarefa não localizada para edição.', 4000);
+    return;
+  }
+
+  // Atualiza os dados
+  const task = activeProcess.tasks[idx];
+  task.title = title;
+  task.description = desc;
+  task.date = date;
+  
+  if (alarmEnable && alarmDatetime) {
+    // Se o alarme foi redefinido ou alterado, limpa a flag alarmTriggered
+    if (task.alarmDate !== alarmDatetime) {
+      task.alarmDate = alarmDatetime;
+      task.alarmTriggered = false;
+    }
+  } else {
+    task.alarmDate = null;
+    task.alarmTriggered = false;
+  }
+
+  await ProcessService.update(activeProcess);
+  closeDialog('task-edit-dialog');
+  showToast('Tarefa atualizada com sucesso!');
+  
+  // Atualiza visualização
+  renderCalendarWidget();
+  renderTasksList();
+}
+
+async function checkActiveAlarms() {
+  if (!currentUserEmail) return;
+  try {
+    const processes = await ProcessService.getProcesses();
+    let hasUpdates = false;
+    const now = new Date();
+
+    for (const process of processes) {
+      if (!process.tasks || process.tasks.length === 0) continue;
+      
+      let processUpdated = false;
+      for (const task of process.tasks) {
+        if (task.completed) continue;
+        if (!task.alarmDate) continue;
+        if (task.alarmTriggered) continue;
+
+        const alarmTime = new Date(task.alarmDate);
+        if (alarmTime <= now) {
+          console.log(`[Alarme] Disparando alarme para a tarefa: "${task.title}" do processo ${process.numeroProcesso}`);
+          
+          // Efeito Sonoro
+          playBeep();
+          setTimeout(playBeep, 200);
+          
+          // Alerta Visual
+          showToast(`🚨 LEMBRETE: "${task.title}" (Processo: ${process.numeroProcesso})`, 8000);
+          
+          // Marca como disparado
+          task.alarmTriggered = true;
+          processUpdated = true;
+          hasUpdates = true;
+        }
+      }
+
+      if (processUpdated) {
+        await ProcessService.update(process);
+        
+        // Se este processo for o que está aberto no detalhe, atualiza o estado ativo
+        if (activeProcess && activeProcess.numeroProcesso === process.numeroProcesso) {
+          activeProcess.tasks = process.tasks;
+        }
+      }
+    }
+
+    if (hasUpdates) {
+      // Se o modal de detalhes estiver ativo, atualiza a lista de tarefas
+      const detailDialog = document.getElementById('process-detail-dialog');
+      if (detailDialog && detailDialog.classList.contains('active')) {
+        renderTasksList();
+      }
+    }
+  } catch (err) {
+    console.error('[Alarme] Erro ao verificar alarmes ativos:', err);
+  }
+}
+
+function playBeep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime); // Nota Lá (A5)
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+    
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.start();
+    osc.stop(ctx.currentTime + 0.4);
+  } catch (err) {
+    console.warn('[Alarme] Áudio do alarme bloqueado ou indisponível:', err);
+  }
 }
 
 // Cria uma tarefa manual sob demanda

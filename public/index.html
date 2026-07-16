@@ -1168,6 +1168,54 @@
       <div class="dialog-footer">
         <button class="md-btn md-btn-text" onclick="closeDialog('add-global-task-dialog')">Cancelar</button>
         <button class="md-btn md-btn-primary" id="btn-save-global-task">Salvar Tarefa</button>
+    </div>
+  </div>
+
+  <!-- MODAL 5: Editar Tarefa e Alarme -->
+  <div class="md-dialog-overlay" id="task-edit-dialog">
+    <div class="md-dialog">
+      <div class="dialog-header">
+        <div class="dialog-title-group">
+          <span class="material-symbols-rounded dialog-header-icon">edit_note</span>
+          <h3>Editar Tarefa</h3>
+        </div>
+        <button class="close-dialog-btn" onclick="closeDialog('task-edit-dialog')">
+          <span class="material-symbols-rounded">close</span>
+        </button>
+      </div>
+      <div class="dialog-content">
+        <input type="hidden" id="edit-task-id">
+        <div class="form-field-group" style="margin-bottom: 12px;">
+          <label for="edit-task-title">Título da Tarefa</label>
+          <input type="text" id="edit-task-title" required style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);">
+        </div>
+        <div class="form-field-group" style="margin-bottom: 12px;">
+          <label for="edit-task-desc">Descrição</label>
+          <textarea id="edit-task-desc" style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); resize: vertical; min-height: 60px; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);"></textarea>
+        </div>
+        <div class="form-field-group" style="margin-bottom: 12px;">
+          <label for="edit-task-date">Data de Vencimento</label>
+          <input type="date" id="edit-task-date" required style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);">
+        </div>
+        
+        <!-- Configuração de Alarme -->
+        <div class="form-field-group" style="margin-top: 16px; padding: 12px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 8px; background: var(--md-sys-color-surface-variant);">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <label style="font-weight: 600; display: flex; align-items: center; gap: 8px; margin: 0; cursor: pointer;">
+              <span class="material-symbols-rounded text-primary" style="font-size: 20px;">alarm</span>
+              Configurar Alarme / Lembrete
+            </label>
+            <input type="checkbox" id="edit-task-alarm-enable" style="cursor: pointer;">
+          </div>
+          <div id="alarm-datetime-picker-container" style="margin-top: 8px; display: none;">
+            <label for="edit-task-alarm-datetime" style="font-size: 11px; margin-bottom: 4px; display: block; color: var(--md-sys-color-on-surface-variant);">Data e Hora do Lembrete</label>
+            <input type="datetime-local" id="edit-task-alarm-datetime" style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);">
+          </div>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <button class="md-btn md-btn-text" onclick="closeDialog('task-edit-dialog')">Cancelar</button>
+        <button class="md-btn md-btn-primary" id="btn-save-task-edit">Salvar</button>
       </div>
     </div>
   </div>
