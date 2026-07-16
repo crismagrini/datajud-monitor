@@ -13,6 +13,7 @@ let useSupabase = false;
 const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const RADAR_FILE = path.join(DATA_DIR, 'radar.json');
+const BLACKLIST_FILE = path.join(DATA_DIR, 'blacklist.json');
 
 // Helpers locais para ler e salvar JSON de forma segura e assíncrona
 async function ensureDir(dir) {
@@ -73,6 +74,10 @@ async function initDb() {
     const radarExist = await fs.access(RADAR_FILE).then(() => true).catch(() => false);
     if (!radarExist) {
       await writeJsonFile(RADAR_FILE, []);
+    }
+    const blacklistExist = await fs.access(BLACKLIST_FILE).then(() => true).catch(() => false);
+    if (!blacklistExist) {
+      await writeJsonFile(BLACKLIST_FILE, []);
     }
   }
 }
@@ -292,6 +297,109 @@ async function purgeMockRadarItems() {
   }
 }
 
+// === API DE CONTROLE DE USUÁRIOS E BLACKLIST (DEV/ADMIN) ===
+
+async function getAllUsers() {
+  if (useSupabase) {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .order('createdAt', { ascending: false });
+    if (error) {
+      console.error('[Supabase] Erro ao buscar todos os usuários:', error);
+      throw error;
+    }
+    return data || [];
+  } else {
+    return await readJsonFile(USERS_FILE);
+  }
+}
+
+async function getBlacklist() {
+  if (useSupabase) {
+    const { data, error } = await supabase
+      .from('blacklist')
+      .select('*')
+      .order('createdAt', { ascending: false });
+    if (error) {
+      console.error('[Supabase] Erro ao buscar blacklist:', error);
+      throw error;
+    }
+    return data || [];
+  } else {
+    return await readJsonFile(BLACKLIST_FILE);
+  }
+}
+
+async function addToBlacklist(email, reason = 'Sem motivo informado') {
+  const emailClean = email.trim().toLowerCase();
+  const item = {
+    email: emailClean,
+    reason: reason,
+    createdAt: new Date().toISOString()
+  };
+
+  if (useSupabase) {
+    const { error } = await supabase
+      .from('blacklist')
+      .upsert([item]);
+    if (error) {
+      console.error(`[Supabase] Erro ao adicionar e-mail ${emailClean} à blacklist:`, error);
+      throw error;
+    }
+  } else {
+    const list = await readJsonFile(BLACKLIST_FILE);
+    const index = list.findIndex(i => i.email === emailClean);
+    if (index !== -1) {
+      list[index] = item;
+    } else {
+      list.push(item);
+    }
+    await writeJsonFile(BLACKLIST_FILE, list);
+  }
+  return item;
+}
+
+async function removeFromBlacklist(email) {
+  const emailClean = email.trim().toLowerCase();
+
+  if (useSupabase) {
+    const { error } = await supabase
+      .from('blacklist')
+      .delete()
+      .eq('email', emailClean);
+    if (error) {
+      console.error(`[Supabase] Erro ao remover e-mail ${emailClean} da blacklist:`, error);
+      throw error;
+    }
+  } else {
+    const list = await readJsonFile(BLACKLIST_FILE);
+    const filtered = list.filter(i => i.email !== emailClean);
+    await writeJsonFile(BLACKLIST_FILE, filtered);
+  }
+}
+
+async function isEmailBlacklisted(email) {
+  if (!email) return false;
+  const emailClean = email.trim().toLowerCase();
+
+  if (useSupabase) {
+    const { data, error } = await supabase
+      .from('blacklist')
+      .select('email')
+      .eq('email', emailClean)
+      .maybeSingle();
+    if (error) {
+      console.error(`[Supabase] Erro ao verificar e-mail ${emailClean} na blacklist:`, error);
+      return false;
+    }
+    return !!data;
+  } else {
+    const list = await readJsonFile(BLACKLIST_FILE);
+    return list.some(i => i.email === emailClean);
+  }
+}
+
 module.exports = {
   initDb,
   findUserByEmail,
@@ -302,5 +410,10 @@ module.exports = {
   getExistingRadarIds,
   insertRadarItems,
   markRadarAsImported,
-  purgeMockRadarItems
+  purgeMockRadarItems,
+  getAllUsers,
+  getBlacklist,
+  addToBlacklist,
+  removeFromBlacklist,
+  isEmailBlacklisted
 };

