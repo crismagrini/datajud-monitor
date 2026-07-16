@@ -878,12 +878,26 @@ function setupEventListeners() {
       
       btnDownloadSupabase.disabled = true;
       try {
-        showToast('Obtendo link de acesso seguro do PDF...');
-        const url = await getPdfAccessUrl(activeProcess.pdfPath);
-        if (url) {
-          window.open(url, '_blank');
+        const paths = activeProcess.pdfPath.split(',');
+        if (paths.length === 1) {
+          showToast('Obtendo link de acesso seguro do PDF...');
+          const url = await getPdfAccessUrl(paths[0]);
+          if (url) {
+            window.open(url, '_blank');
+          } else {
+            showToast('Não foi possível obter a URL do arquivo no Supabase Storage.', 4000);
+          }
         } else {
-          showToast('Não foi possível obter a URL do arquivo no Supabase Storage.', 4000);
+          showToast(`Obtendo links de acesso para as ${paths.length} partes do PDF...`);
+          for (let i = 0; i < paths.length; i++) {
+            const url = await getPdfAccessUrl(paths[i]);
+            if (url) {
+              // Pequeno atraso escalonado para evitar bloqueador de pop-ups do navegador
+              setTimeout(() => {
+                window.open(url, '_blank');
+              }, i * 400);
+            }
+          }
         }
       } catch (err) {
         showToast(`Erro ao abrir o PDF: ${err.message}`, 4000);
@@ -1519,32 +1533,132 @@ function getSupabaseClient() {
   }
 }
 
+/**
+ * Divide um arquivo PDF em partes menores de aproximadamente 40MB cada
+ * @param {File} file Arquivo original
+ * @returns {Promise<File[]>} Lista de arquivos gerados (partes)
+ */
+async function splitPdfFile(file) {
+  console.log(`[PDF Splitter] Iniciando divisão do arquivo: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+  
+  if (typeof PDFLib === 'undefined') {
+    throw new Error('Biblioteca pdf-lib não está disponível para realizar a divisão do PDF.');
+  }
+
+  // Lê o arquivo como ArrayBuffer
+  const arrayBuffer = await file.arrayBuffer();
+  
+  // Carrega o documento PDF original
+  const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
+  const totalPages = pdfDoc.getPageCount();
+  console.log(`[PDF Splitter] PDF carregado. Total de páginas: ${totalPages}`);
+
+  // Calcula o número de partes estimadas baseado no tamanho do arquivo
+  const maxChunkSize = 40 * 1024 * 1024; // 40MB para margem de segurança do Supabase (50MB limit)
+  const numberOfParts = Math.ceil(file.size / maxChunkSize);
+  const pagesPerPart = Math.ceil(totalPages / numberOfParts);
+  
+  console.log(`[PDF Splitter] Dividindo o PDF em ${numberOfParts} partes (~${pagesPerPart} páginas por parte).`);
+
+  const splitFiles = [];
+  
+  for (let i = 0; i < numberOfParts; i++) {
+    const startPage = i * pagesPerPart;
+    const endPage = Math.min((i + 1) * pagesPerPart - 1, totalPages - 1);
+    
+    if (startPage >= totalPages) break;
+    
+    console.log(`[PDF Splitter] Criando parte ${i + 1} (Páginas ${startPage + 1} até ${endPage + 1})...`);
+    
+    // Cria um novo subdocumento
+    const subDoc = await PDFLib.PDFDocument.create();
+    
+    // Cria um array de índices das páginas a copiar
+    const pageIndices = [];
+    for (let p = startPage; p <= endPage; p++) {
+      pageIndices.push(p);
+    }
+    
+    // Copia as páginas do original para o subdocumento
+    const copiedPages = await subDoc.copyPages(pdfDoc, pageIndices);
+    copiedPages.forEach(page => subDoc.addPage(page));
+    
+    // Salva o PDF particionado
+    const subPdfBytes = await subDoc.save();
+    
+    // Cria um novo arquivo Blob/File
+    const partBlob = new Blob([subPdfBytes], { type: 'application/pdf' });
+    const originalNameWithoutExt = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+    const partFile = new File([partBlob], `${originalNameWithoutExt}_parte${i + 1}.pdf`, { type: 'application/pdf' });
+    
+    splitFiles.push(partFile);
+  }
+
+  console.log(`[PDF Splitter] Divisão concluída! ${splitFiles.length} partes geradas.`);
+  return splitFiles;
+}
+
 async function uploadPdfToSupabase(file, processNumber) {
   const client = getSupabaseClient();
   if (!client) {
     throw new Error('Supabase não configurado ou cliente indisponível. Verifique as configurações de APIs.');
   }
 
-  // Nomeia o arquivo utilizando o e-mail do usuário sanitizado e o número do processo para organização
   const fileExt = 'pdf';
   const sanitizeEmail = (currentUserEmail || 'anon').replace(/[^a-zA-Z0-9]/g, '_');
-  const filePath = `${sanitizeEmail}/${processNumber}_${Date.now()}.${fileExt}`;
+  const maxLimit = 50 * 1024 * 1024; // 50MB
 
-  console.log(`[Supabase] Iniciando upload de ${file.name} para o caminho ${filePath}...`);
-  
-  const { data, error } = await client.storage
-    .from(supabaseBucket)
-    .upload(filePath, file, {
-      cacheControl: '3600',
-      upsert: true
-    });
+  if (file.size > maxLimit) {
+    console.log(`[Supabase] Arquivo excede o limite de 50MB (${(file.size / 1024 / 1024).toFixed(2)} MB). Iniciando divisão local...`);
+    const statusText = document.getElementById('pdf-loading-status');
+    if (statusText) statusText.textContent = "Dividindo PDF pesado em partes menores...";
+    
+    const parts = await splitPdfFile(file);
+    const uploadedPaths = [];
+    
+    for (let i = 0; i < parts.length; i++) {
+      const partFile = parts[i];
+      const filePath = `${sanitizeEmail}/${processNumber}_part${i + 1}_${Date.now()}.${fileExt}`;
+      
+      if (statusText) statusText.textContent = `Enviando parte ${i + 1} de ${parts.length} para o Supabase...`;
+      console.log(`[Supabase] Enviando parte ${i + 1}: ${partFile.name} para o caminho ${filePath}...`);
+      
+      const { data, error } = await client.storage
+        .from(supabaseBucket)
+        .upload(filePath, partFile, {
+          cacheControl: '3600',
+          upsert: true
+        });
 
-  if (error) {
-    throw error;
+      if (error) {
+        throw error;
+      }
+      
+      uploadedPaths.push(data.path);
+    }
+    
+    console.log('[Supabase] Todas as partes enviadas com sucesso:', uploadedPaths);
+    return uploadedPaths.join(',');
+  } else {
+    // Comportamento normal para arquivo menor que 50MB
+    const filePath = `${sanitizeEmail}/${processNumber}_${Date.now()}.${fileExt}`;
+
+    console.log(`[Supabase] Iniciando upload de ${file.name} para o caminho ${filePath}...`);
+    
+    const { data, error } = await client.storage
+      .from(supabaseBucket)
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        upsert: true
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    console.log('[Supabase] Upload realizado com sucesso. Dados:', data);
+    return data.path;
   }
-
-  console.log('[Supabase] Upload realizado com sucesso. Dados:', data);
-  return data.path;
 }
 
 async function getPdfAccessUrl(filePath) {
