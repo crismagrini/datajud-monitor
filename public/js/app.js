@@ -1,0 +1,3541 @@
+/* ==========================================================================
+   DADOS E CONFIGURAÇÕES DO APLICATIVO
+   ========================================================================== */
+
+const TRIBUNAIS = [
+  { alias: 'tjsp', nome: 'TJ São Paulo', tipo: 'estadual' },
+  { alias: 'tjrj', nome: 'TJ Rio de Janeiro', tipo: 'estadual' },
+  { alias: 'tjmg', nome: 'TJ Minas Gerais', tipo: 'estadual' },
+  { alias: 'tjrs', nome: 'TJ Rio Grande do Sul', tipo: 'estadual' },
+  { alias: 'tjpr', nome: 'TJ Paraná', tipo: 'estadual' },
+  { alias: 'tjsc', nome: 'TJ Santa Catarina', tipo: 'estadual' },
+  { alias: 'tjba', nome: 'TJ Bahia', tipo: 'estadual' },
+  { alias: 'tjpe', nome: 'TJ Pernambuco', tipo: 'estadual' },
+  { alias: 'tjce', nome: 'TJ Ceará', tipo: 'estadual' },
+  { alias: 'tjdft', nome: 'TJ Distrito Federal e Territórios', tipo: 'estadual' },
+  
+  { alias: 'trf1', nome: 'TRF 1ª Região (DF)', tipo: 'federal' },
+  { alias: 'trf2', nome: 'TRF 2ª Região (RJ/ES)', tipo: 'federal' },
+  { alias: 'trf3', nome: 'TRF 3ª Região (SP/MS)', tipo: 'federal' },
+  { alias: 'trf4', nome: 'TRF 4ª Região (Sul)', tipo: 'federal' },
+  { alias: 'trf5', nome: 'TRF 5ª Região (Nordeste)', tipo: 'federal' },
+  { alias: 'trf6', nome: 'TRF 6ª Região (MG)', tipo: 'federal' },
+  
+  { alias: 'trt1', nome: 'TRT 1ª Região (RJ)', tipo: 'trabalho' },
+  { alias: 'trt2', nome: 'TRT 2ª Região (SP)', tipo: 'trabalho' },
+  { alias: 'trt3', nome: 'TRT 3ª Região (MG)', tipo: 'trabalho' },
+  { alias: 'trt4', nome: 'TRT 4ª Região (RS)', tipo: 'trabalho' },
+  { alias: 'trt5', nome: 'TRT 5ª Região (BA)', tipo: 'trabalho' },
+  { alias: 'trt15', nome: 'TRT 15ª Região (Campinas)', tipo: 'trabalho' },
+  
+  { alias: 'stj', nome: 'Superior Tribunal de Justiça', tipo: 'superior' },
+  { alias: 'tst', nome: 'Tribunal Superior do Trabalho', tipo: 'superior' },
+  { alias: 'tse', nome: 'Tribunal Superior Eleitoral', tipo: 'superior' }
+];
+
+// Estado da Aplicação (Variáveis Globais) - Sem simulações fictícias
+let customApiKey = '';
+let geminiApiKey = '';
+let activeProcess = null;
+let currentCalendarMonth = new Date().getMonth();
+let currentCalendarYear = new Date().getFullYear();
+let selectedCalendarDateStr = null;
+let currentUserEmail = null;
+let jwtToken = null;
+
+// Requisições autenticadas por JWT para o servidor
+async function authFetch(url, options = {}) {
+  if (!options.headers) {
+    options.headers = {};
+  }
+  if (jwtToken) {
+    options.headers['Authorization'] = `Bearer ${jwtToken}`;
+  }
+  
+  try {
+    const response = await fetch(url, options);
+    
+    if (response.status === 401 || response.status === 403) {
+      jwtToken = null;
+      currentUserEmail = null;
+      localStorage.removeItem('jwt_token');
+      localStorage.removeItem('user_email');
+      showAuthScreen();
+      showToast('Sessão expirada ou inválida. Por favor, entre novamente.', 5000);
+    }
+    
+    return response;
+  } catch (err) {
+    console.error('[authFetch] Erro na requisição:', err);
+    throw err;
+  }
+}
+
+/* ==========================================================================
+   INDEXEDDB SERVICE: PERSISTÊNCIA DE ALTA CAPACIDADE (PARTICIONADO POR USUÁRIO)
+   ========================================================================== */
+
+const DB_NAME = 'DatajudMonitorDB';
+const DB_VERSION = 2; // Incrementado para v2 devido à mudança de chave (partição por usuário)
+const STORE_NAME = 'processes';
+
+function getDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    request.onupgradeneeded = (e) => {
+      const db = request.result;
+      // Se existir a store antiga, deleta para recriar com a nova chave composta
+      if (db.objectStoreNames.contains(STORE_NAME)) {
+        db.deleteObjectStore(STORE_NAME);
+      }
+      db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+    };
+  });
+}
+
+const ProcessService = {
+  async getProcesses() {
+    try {
+      if (!currentUserEmail) return [];
+      const db = await getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.getAll();
+        req.onsuccess = () => {
+          const all = req.result || [];
+          // Retorna apenas os processos vinculados ao e-mail do usuário logado
+          const filtered = all.filter(p => p.userEmail === currentUserEmail);
+          resolve(filtered);
+        };
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      console.error('[ProcessService] Falha ao ler do IndexedDB:', err);
+      return [];
+    }
+  },
+  async saveAll(processes) {
+    try {
+      if (!currentUserEmail) return;
+      const db = await getDB();
+      const all = await new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      });
+
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        
+        // Deleta os processos anteriores deste usuário
+        all.forEach(p => {
+          if (p.userEmail === currentUserEmail) {
+            store.delete(p.id);
+          }
+        });
+
+        // Insere os novos
+        processes.forEach(p => {
+          p.userEmail = currentUserEmail;
+          p.id = `${currentUserEmail}_${p.numeroProcesso}`;
+          store.put(p);
+        });
+
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch (err) {
+      console.error('[ProcessService] Falha ao salvar no IndexedDB:', err);
+    }
+  },
+  async add(process) {
+    try {
+      if (!currentUserEmail) return false;
+      const db = await getDB();
+      const processes = await this.getProcesses();
+      if (processes.some(p => p.numeroProcesso === process.numeroProcesso)) return false;
+      
+      process.hasUpdate = false;
+      process.lastChecked = new Date().toISOString();
+      process.userEmail = currentUserEmail;
+      process.id = `${currentUserEmail}_${process.numeroProcesso}`;
+      
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.add(process);
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      console.error('[ProcessService] Falha ao adicionar no IndexedDB:', err);
+      return false;
+    }
+  },
+  async remove(processNumber) {
+    try {
+      if (!currentUserEmail) return;
+      const db = await getDB();
+      const compositeId = `${currentUserEmail}_${processNumber}`;
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.delete(compositeId);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      console.error('[ProcessService] Falha ao remover no IndexedDB:', err);
+    }
+  },
+  async update(updatedProcess) {
+    try {
+      if (!currentUserEmail) return false;
+      const db = await getDB();
+      updatedProcess.userEmail = currentUserEmail;
+      updatedProcess.id = `${currentUserEmail}_${updatedProcess.numeroProcesso}`;
+      
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.put(updatedProcess);
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => reject(req.error);
+      });
+    } catch (err) {
+      console.error('[ProcessService] Falha ao atualizar no IndexedDB:', err);
+      return false;
+    }
+  }
+};
+
+/* ==========================================================================
+   INICIALIZAÇÃO DO APLICATIVO E CONTROLE DE ACESSO
+   ========================================================================== */
+
+document.addEventListener('DOMContentLoaded', async () => {
+  setupAuthEventListeners();
+  const isAuthenticated = checkAuthSession();
+  
+  loadConfig();
+  populateManualCourts();
+  setupEventListeners();
+
+  if (isAuthenticated) {
+    await renderDashboard();
+    // Executa busca automática silenciosa de atualizações no início
+    setTimeout(syncAllMonitoredSilently, 2000);
+  }
+});
+
+// Controladores da Interface de Autenticação
+function showAuthScreen() {
+  document.getElementById('auth-screen').style.display = 'flex';
+  document.getElementById('email-verification-screen').style.display = 'none';
+  document.querySelector('.app-container').style.display = 'none';
+}
+
+function showVerificationScreen(testCode = '') {
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('email-verification-screen').style.display = 'flex';
+  document.querySelector('.app-container').style.display = 'none';
+
+  const mockAlert = document.getElementById('verification-mock-alert');
+  const mockText = document.getElementById('verification-mock-code-text');
+  
+  if (testCode && mockAlert && mockText) {
+    mockAlert.style.display = 'flex';
+    mockText.textContent = `Seu código gerado é: ${testCode}`;
+  } else if (mockAlert) {
+    mockAlert.style.display = 'none';
+  }
+  document.getElementById('verification-code').value = '';
+  document.getElementById('verification-error-box').style.display = 'none';
+}
+
+function showDashboard() {
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('email-verification-screen').style.display = 'none';
+  document.querySelector('.app-container').style.display = 'flex';
+  document.getElementById('user-display-email').textContent = currentUserEmail;
+  
+  // Atualiza contador de radar em segundo plano
+  setTimeout(updateRadarBadgeCount, 500);
+}
+
+function checkAuthSession() {
+  jwtToken = localStorage.getItem('jwt_token');
+  currentUserEmail = localStorage.getItem('user_email');
+  const userVerified = localStorage.getItem('user_verified');
+  
+  if (jwtToken && currentUserEmail) {
+    if (userVerified === 'false') {
+      showVerificationScreen(localStorage.getItem('verification_code_test'));
+    } else {
+      showDashboard();
+    }
+    return true;
+  } else {
+    showAuthScreen();
+    return false;
+  }
+}
+
+function setupAuthEventListeners() {
+  // Alternar entre Formulários de Login/Cadastro
+  document.getElementById('link-to-register').addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('auth-login-form').style.display = 'none';
+    document.getElementById('auth-register-form').style.display = 'block';
+    document.getElementById('auth-message-box').style.display = 'none';
+  });
+
+  document.getElementById('link-to-login').addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('auth-register-form').style.display = 'none';
+    document.getElementById('auth-login-form').style.display = 'block';
+    document.getElementById('auth-message-box').style.display = 'none';
+  });
+
+  // Formatação automática do CPF no cadastro
+  const cpfRegInput = document.getElementById('reg-cpf');
+  if (cpfRegInput) {
+    cpfRegInput.addEventListener('input', (e) => {
+      let clean = e.target.value.replace(/[^0-9]/g, '');
+      if (clean.length > 11) clean = clean.substring(0, 11);
+      
+      let formatted = clean;
+      if (clean.length > 3) {
+        formatted = `${clean.substring(0, 3)}.${clean.substring(3)}`;
+        if (clean.length > 6) {
+          formatted = `${clean.substring(0, 3)}.${clean.substring(3, 6)}.${clean.substring(6)}`;
+          if (clean.length > 9) {
+            formatted = `${clean.substring(0, 3)}.${clean.substring(3, 6)}.${clean.substring(6, 9)}-${clean.substring(9)}`;
+          }
+        }
+      }
+      e.target.value = formatted;
+    });
+  }
+
+  // Submissão do Login
+  document.getElementById('auth-login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value;
+    const msgBox = document.getElementById('auth-message-box');
+    const msgText = document.getElementById('auth-message-text');
+    const btnSubmit = document.getElementById('btn-submit-login');
+
+    msgBox.style.display = 'none';
+    btnSubmit.disabled = true;
+    const originalText = btnSubmit.textContent;
+    btnSubmit.textContent = 'Entrando...';
+
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Erro ao realizar login.');
+      }
+
+      jwtToken = data.token;
+      currentUserEmail = data.email;
+      localStorage.setItem('jwt_token', jwtToken);
+      localStorage.setItem('user_email', currentUserEmail);
+      localStorage.setItem('user_verified', data.verified ? 'true' : 'false');
+      
+      document.getElementById('auth-login-form').reset();
+      
+      if (data.verified === false) {
+        localStorage.setItem('verification_code_test', data._testVerificationCode || '');
+        showVerificationScreen(data._testVerificationCode);
+        showToast('Confirme o código de ativação do seu e-mail.');
+      } else {
+        localStorage.removeItem('verification_code_test');
+        showDashboard();
+        await renderDashboard();
+        showToast('Bem-vindo de volta!');
+        setTimeout(syncAllMonitoredSilently, 1000);
+      }
+    } catch (err) {
+      msgBox.style.display = 'block';
+      msgBox.className = 'auth-message-box';
+      msgText.textContent = err.message;
+    } finally {
+      btnSubmit.disabled = false;
+      btnSubmit.textContent = originalText;
+    }
+  });
+
+  // Submissão do Cadastro
+  document.getElementById('auth-register-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('reg-email').value.trim();
+    const name = document.getElementById('reg-name').value.trim();
+    const cpf = document.getElementById('reg-cpf').value.trim();
+    const password = document.getElementById('reg-password').value;
+    const confirmPassword = document.getElementById('reg-confirm-password').value;
+    const msgBox = document.getElementById('auth-message-box');
+    const msgText = document.getElementById('auth-message-text');
+    const btnSubmit = document.getElementById('btn-submit-register');
+
+    msgBox.style.display = 'none';
+
+    if (!name) {
+      msgBox.style.display = 'block';
+      msgBox.className = 'auth-message-box';
+      msgText.textContent = 'Nome completo é obrigatório.';
+      return;
+    }
+
+    const cleanCPF = cpf.replace(/[^0-9]/g, '');
+    if (cleanCPF.length !== 11) {
+      msgBox.style.display = 'block';
+      msgBox.className = 'auth-message-box';
+      msgText.textContent = 'CPF inválido. Deve conter 11 dígitos.';
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      msgBox.style.display = 'block';
+      msgBox.className = 'auth-message-box';
+      msgText.textContent = 'As senhas não coincidem.';
+      return;
+    }
+
+    btnSubmit.disabled = true;
+    const originalText = btnSubmit.textContent;
+    btnSubmit.textContent = 'Criando conta...';
+
+    try {
+      const registerResponse = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, name, cpf: cleanCPF })
+      });
+
+      const regData = await registerResponse.json();
+      if (!registerResponse.ok) {
+        throw new Error(regData.error || 'Erro ao realizar cadastro.');
+      }
+
+      const loginResponse = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+
+      const loginData = await loginResponse.json();
+      if (!loginResponse.ok) {
+        throw new Error(loginData.error || 'Erro ao realizar login pós-cadastro.');
+      }
+
+      jwtToken = loginData.token;
+      currentUserEmail = loginData.email;
+      localStorage.setItem('jwt_token', jwtToken);
+      localStorage.setItem('user_email', currentUserEmail);
+      localStorage.setItem('user_verified', 'false');
+      localStorage.setItem('verification_code_test', regData._testVerificationCode || '');
+
+      document.getElementById('auth-register-form').reset();
+      showVerificationScreen(regData._testVerificationCode);
+      showToast('Conta criada com sucesso! Ative seu e-mail.');
+    } catch (err) {
+      msgBox.style.display = 'block';
+      msgBox.className = 'auth-message-box';
+      msgText.textContent = err.message;
+    } finally {
+      btnSubmit.disabled = false;
+      btnSubmit.textContent = originalText;
+    }
+  });
+
+  // Botão de Sair (Logout)
+  document.getElementById('btn-logout').addEventListener('click', () => {
+    if (confirm('Deseja realmente sair da sua conta?')) {
+      jwtToken = null;
+      currentUserEmail = null;
+      localStorage.removeItem('jwt_token');
+      localStorage.removeItem('user_email');
+      localStorage.removeItem('user_verified');
+      localStorage.removeItem('verification_code_test');
+      showAuthScreen();
+      showToast('Sessão encerrada.');
+    }
+  });
+
+  // Submissão do Formulário de Verificação de E-mail
+  const verificationForm = document.getElementById('email-verification-form');
+  if (verificationForm) {
+    verificationForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const code = document.getElementById('verification-code').value.trim();
+      const errBox = document.getElementById('verification-error-box');
+      const errText = document.getElementById('verification-error-text');
+      const btn = document.getElementById('btn-submit-verification');
+      
+      errBox.style.display = 'none';
+      if (code.length !== 6) {
+        errBox.style.display = 'block';
+        errText.textContent = 'O código de ativação deve possuir 6 dígitos.';
+        return;
+      }
+      
+      btn.disabled = true;
+      const originalText = btn.textContent;
+      btn.textContent = 'Confirmando...';
+      
+      try {
+        const response = await fetch('/api/auth/verify-email', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${jwtToken}`
+          },
+          body: JSON.stringify({ code })
+        });
+        
+        const resData = await response.json();
+        if (!response.ok) {
+          throw new Error(resData.error || 'Erro na verificação do código.');
+        }
+        
+        localStorage.setItem('user_verified', 'true');
+        localStorage.removeItem('verification_code_test');
+        
+        document.getElementById('email-verification-screen').style.display = 'none';
+        showDashboard();
+        await renderDashboard();
+        showToast('E-mail verificado com sucesso! Conta ativada.');
+        setTimeout(syncAllMonitoredSilently, 1000);
+      } catch (err) {
+        errBox.style.display = 'block';
+        errText.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    });
+  }
+
+  // Logout na tela de verificação
+  const verificationLogout = document.getElementById('link-verification-logout');
+  if (verificationLogout) {
+    verificationLogout.addEventListener('click', (e) => {
+      e.preventDefault();
+      jwtToken = null;
+      currentUserEmail = null;
+      localStorage.removeItem('jwt_token');
+      localStorage.removeItem('user_email');
+      localStorage.removeItem('user_verified');
+      localStorage.removeItem('verification_code_test');
+      document.getElementById('email-verification-screen').style.display = 'none';
+      showAuthScreen();
+    });
+  }
+}
+
+// Carrega configurações salvas
+function loadConfig() {
+  customApiKey = localStorage.getItem('datajud_api_key') || '';
+  document.getElementById('settings-datajud-key').value = customApiKey;
+  
+  geminiApiKey = localStorage.getItem('gemini_api_key') || '';
+  document.getElementById('settings-gemini-key').value = geminiApiKey;
+}
+
+// Popula o select de tribunais do cadastro manual
+function populateManualCourts() {
+  const select = document.getElementById('reg-manual-court');
+  select.innerHTML = '<option value="">Selecione...</option>';
+  TRIBUNAIS.forEach(t => {
+    select.innerHTML += `<option value="${t.alias.toUpperCase()}">${t.nome}</option>`;
+  });
+}
+
+/* ==========================================================================
+   PARSER AUTOMÁTICO DE CNJ (IDENTIFICAÇÃO DO TRIBUNAL)
+   ========================================================================== */
+
+// Detecta o tribunal do CNJ com base no J.TR (posições 13, 14 e 15)
+function detectCourtFromCNJ(cnjNumber) {
+  const clean = cnjNumber.replace(/[^0-9]/g, '');
+  if (clean.length !== 20) return null;
+  
+  const j = clean.substring(13, 14);
+  const tr = clean.substring(14, 16);
+  const key = `${j}.${tr}`;
+  
+  const mapping = {
+    '8.26': 'tjsp', '8.19': 'tjrj', '8.13': 'tjmg', '8.21': 'tjrs',
+    '8.16': 'tjpr', '8.24': 'tjsc', '8.05': 'tjba', '8.17': 'tjpe',
+    '8.06': 'tjce', '8.07': 'tjdft',
+    '4.01': 'trf1', '4.02': 'trf2', '4.03': 'trf3', '4.04': 'trf4',
+    '4.05': 'trf5', '4.06': 'trf6',
+    '5.01': 'trt1', '5.02': 'trt2', '5.03': 'trt3', '5.04': 'trt4',
+    '5.05': 'trt5', '5.15': 'trt15',
+    '3.00': 'stj', '5.00': 'tst', '6.00': 'tse'
+  };
+  
+  return mapping[key] || null;
+}
+
+/* ==========================================================================
+   GERENCIAMENTO DE DIÁLOGOS (MODAIS)
+   ========================================================================== */
+
+function openDialog(dialogId) {
+  document.getElementById(dialogId).classList.add('active');
+}
+
+function closeDialog(dialogId) {
+  document.getElementById(dialogId).classList.remove('active');
+  if (dialogId === 'register-process-dialog') {
+    resetRegisterForm();
+  }
+}
+
+function resetRegisterForm() {
+  document.getElementById('reg-process-number').value = '';
+  document.getElementById('reg-auto-search').checked = true;
+  document.getElementById('manual-form-container').style.display = 'none';
+  document.getElementById('reg-manual-court').value = '';
+  document.getElementById('reg-manual-orgao').value = '';
+  document.getElementById('reg-manual-class').value = '';
+  document.getElementById('reg-manual-subject').value = '';
+  document.getElementById('reg-manual-autor').value = '';
+  document.getElementById('reg-manual-reu').value = '';
+  document.getElementById('reg-manual-last-mov').value = '';
+}
+
+/* ==========================================================================
+   CONFIGURAÇÃO DOS DIÁLOGOS E EVENTOS DE ENTRADA
+   ========================================================================== */
+
+function setupEventListeners() {
+  // Alternar Abas Principais do Dashboard
+  document.getElementById('btn-dash-tab-processes').addEventListener('click', (e) => {
+    document.getElementById('btn-dash-tab-processes').classList.add('active');
+    document.getElementById('btn-dash-tab-finance').classList.remove('active');
+    document.getElementById('btn-dash-tab-tasks').classList.remove('active');
+    document.getElementById('btn-dash-tab-radar').classList.remove('active');
+    document.getElementById('section-dash-processes').style.display = 'block';
+    document.getElementById('section-dash-finance').style.display = 'none';
+    document.getElementById('section-dash-tasks').style.display = 'none';
+    document.getElementById('section-dash-radar').style.display = 'none';
+    document.getElementById('btn-add-process-fab').style.display = 'flex';
+  });
+
+  document.getElementById('btn-dash-tab-finance').addEventListener('click', async (e) => {
+    document.getElementById('btn-dash-tab-processes').classList.remove('active');
+    document.getElementById('btn-dash-tab-finance').classList.add('active');
+    document.getElementById('btn-dash-tab-tasks').classList.remove('active');
+    document.getElementById('btn-dash-tab-radar').classList.remove('active');
+    document.getElementById('section-dash-processes').style.display = 'none';
+    document.getElementById('section-dash-finance').style.display = 'block';
+    document.getElementById('section-dash-tasks').style.display = 'none';
+    document.getElementById('section-dash-radar').style.display = 'none';
+    document.getElementById('btn-add-process-fab').style.display = 'none';
+    await renderFinanceDashboard();
+  });
+
+  document.getElementById('btn-dash-tab-tasks').addEventListener('click', async (e) => {
+    document.getElementById('btn-dash-tab-processes').classList.remove('active');
+    document.getElementById('btn-dash-tab-finance').classList.remove('active');
+    document.getElementById('btn-dash-tab-tasks').classList.add('active');
+    document.getElementById('btn-dash-tab-radar').classList.remove('active');
+    document.getElementById('section-dash-processes').style.display = 'none';
+    document.getElementById('section-dash-finance').style.display = 'none';
+    document.getElementById('section-dash-tasks').style.display = 'block';
+    document.getElementById('section-dash-radar').style.display = 'none';
+    document.getElementById('btn-add-process-fab').style.display = 'none';
+    await renderTasksDashboard();
+  });
+
+  document.getElementById('btn-dash-tab-radar').addEventListener('click', async (e) => {
+    document.getElementById('btn-dash-tab-processes').classList.remove('active');
+    document.getElementById('btn-dash-tab-finance').classList.remove('active');
+    document.getElementById('btn-dash-tab-tasks').classList.remove('active');
+    document.getElementById('btn-dash-tab-radar').classList.add('active');
+    document.getElementById('section-dash-processes').style.display = 'none';
+    document.getElementById('section-dash-finance').style.display = 'none';
+    document.getElementById('section-dash-tasks').style.display = 'none';
+    document.getElementById('section-dash-radar').style.display = 'block';
+    document.getElementById('btn-add-process-fab').style.display = 'none';
+
+    const lastScan = localStorage.getItem('radarLastScan');
+    const label = document.getElementById('radar-last-scan-label');
+    if (lastScan) {
+      label.textContent = `Última varredura: ${new Date(lastScan).toLocaleString('pt-BR')}`;
+    } else {
+      label.textContent = '';
+    }
+
+    // Varredura automática diária (se > 24h desde a última)
+    if (lastScan) {
+      const hoursSinceScan = (Date.now() - new Date(lastScan).getTime()) / 3600000;
+      if (hoursSinceScan >= 24) {
+        performRadarScan();
+        return;
+      }
+    }
+
+    await renderRadarDashboard();
+  });
+
+  // Botão de varredura do radar
+  const radarScanBtn = document.getElementById('btn-radar-scan');
+  if (radarScanBtn) {
+    radarScanBtn.addEventListener('click', performRadarScan);
+  }
+
+  // Abrir Cadastro de Processo (FAB)
+  document.getElementById('btn-add-process-fab').addEventListener('click', () => openDialog('register-process-dialog'));
+  
+  // Abrir Cadastro pelo estado vazio
+  document.getElementById('btn-empty-add').addEventListener('click', () => openDialog('register-process-dialog'));
+  
+  // Abrir Configurações
+  document.getElementById('btn-open-settings').addEventListener('click', () => {
+    openDialog('settings-dialog');
+    
+    // Inicializa abas das configurações
+    const settingsTabs = document.querySelectorAll('#settings-dialog-tabs .tab-btn');
+    settingsTabs.forEach(b => b.classList.remove('active'));
+    settingsTabs[0].classList.add('active');
+    
+    document.querySelectorAll('.settings-tab-content').forEach(c => {
+      c.style.display = 'none';
+      c.classList.remove('active-tab');
+    });
+    const firstTabId = settingsTabs[0].getAttribute('data-settings-target');
+    document.getElementById(firstTabId).style.display = 'block';
+    document.getElementById(firstTabId).classList.add('active-tab');
+    
+    // Oculta caixa de status de lote
+    document.getElementById('batch-import-status-box').style.display = 'none';
+    
+    // Popula select de tribunais para importação se estiver vazio
+    const courtSelect = document.getElementById('settings-import-court');
+    if (courtSelect.options.length === 0) {
+      TRIBUNAIS.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.alias;
+        opt.textContent = `${t.alias.toUpperCase()} - ${t.nome}`;
+        courtSelect.appendChild(opt);
+      });
+    }
+  });
+
+  // Configuração das Abas do Modal de Configurações
+  const settingsTabs = document.querySelectorAll('#settings-dialog-tabs .tab-btn');
+  settingsTabs.forEach(btn => {
+    btn.addEventListener('click', () => {
+      settingsTabs.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      
+      const target = btn.getAttribute('data-settings-target');
+      document.querySelectorAll('.settings-tab-content').forEach(c => {
+        c.style.display = 'none';
+        c.classList.remove('active-tab');
+      });
+      const targetEl = document.getElementById(target);
+      targetEl.style.display = 'block';
+      targetEl.classList.add('active-tab');
+
+      if (target === 'settings-tab-arquivados') {
+        renderSettingsArchivedList();
+      }
+    });
+  });
+
+  // Gatilho de Importação por Lote
+  document.getElementById('btn-start-batch-import').addEventListener('click', handleBatchImport);
+
+  // Mostrar/Ocultar campos manuais ao alternar a busca automática
+  document.getElementById('reg-auto-search').addEventListener('change', (e) => {
+    const container = document.getElementById('manual-form-container');
+    container.style.display = e.target.checked ? 'none' : 'block';
+  });
+
+  // Salvar processo
+  document.getElementById('btn-confirm-register').addEventListener('click', handleRegisterSubmit);
+
+  // Filtro de processos em tempo real
+  document.getElementById('filter-monitored').addEventListener('input', async (e) => {
+    await renderDashboard(e.target.value.trim());
+  });
+
+  // Toggle de exibição de arquivados
+  document.getElementById('toggle-show-archived').addEventListener('change', async () => {
+    await renderDashboard();
+  });
+
+  // Chaves de visibilidade de API
+  setupKeyVisibility('btn-toggle-gemini-key-visibility', 'settings-gemini-key', 'gemini-key-visibility-icon');
+  setupKeyVisibility('btn-toggle-datajud-key-visibility', 'settings-datajud-key', 'datajud-key-visibility-icon');
+
+  // Gerenciamento de arquivos e dados
+  document.getElementById('btn-export-data').addEventListener('click', exportData);
+  document.getElementById('btn-import-trigger').addEventListener('click', () => {
+    document.getElementById('import-file-input').click();
+  });
+  document.getElementById('import-file-input').addEventListener('change', importData);
+  document.getElementById('btn-clear-all-data').addEventListener('click', clearAllLocalData);
+
+  // Gatilho de Upload do PDF
+  document.getElementById('btn-upload-pdf-trigger').addEventListener('click', () => {
+    document.getElementById('pdf-file-input').click();
+  });
+  document.getElementById('btn-update-pdf-trigger').addEventListener('click', () => {
+    document.getElementById('pdf-file-input').click();
+  });
+  document.getElementById('pdf-file-input').addEventListener('change', handlePdfUpload);
+
+  // Configuração das Abas do Modal de Detalhes
+  const tabButtons = document.querySelectorAll('.dialog-tabs .tab-btn');
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      
+      const target = btn.getAttribute('data-modal-target');
+      document.querySelectorAll('.modal-tab-content').forEach(c => c.classList.remove('active-tab'));
+      document.getElementById(target).classList.add('active-tab');
+      
+      if (target === 'tab-agenda-tarefas') {
+        renderAgendaTab();
+      }
+    });
+  });
+
+  // Eventos do Calendário Mensal e Tarefas
+  document.getElementById('cal-prev-month').addEventListener('click', () => {
+    currentCalendarMonth--;
+    if (currentCalendarMonth < 0) {
+      currentCalendarMonth = 11;
+      currentCalendarYear--;
+    }
+    renderCalendarWidget();
+  });
+  
+  document.getElementById('cal-next-month').addEventListener('click', () => {
+    currentCalendarMonth++;
+    if (currentCalendarMonth > 11) {
+      currentCalendarMonth = 0;
+      currentCalendarYear++;
+    }
+    renderCalendarWidget();
+  });
+  
+  document.getElementById('btn-add-manual-task').addEventListener('click', handleAddManualTask);
+
+  // Botões de Ação da IA
+  document.getElementById('btn-generate-ai-analysis').addEventListener('click', generateAIAnalysis);
+  document.getElementById('btn-regenerate-ai-analysis').addEventListener('click', generateAIAnalysis);
+  document.getElementById('btn-copy-ai-analysis').addEventListener('click', copyAIAnalysisText);
+
+  // Edição da Ficha Técnica do Expert
+  document.getElementById('btn-edit-expert-info').addEventListener('click', () => {
+    if (!activeProcess) return;
+    document.getElementById('expert-info-card').style.display = 'none';
+    document.getElementById('expert-info-edit').style.display = 'flex';
+    
+    // Popula inputs com dados atuais
+    const info = activeProcess.expertInfo || {};
+    document.getElementById('edit-expert-autor').value = info.autor || '';
+    document.getElementById('edit-expert-reu').value = info.reu || '';
+    document.getElementById('edit-expert-perito').value = info.perito || '';
+    document.getElementById('edit-expert-jg').value = info.justicaGratuita || 'Não informado';
+    document.getElementById('edit-expert-comarca').value = info.cidadeEstado || '';
+    document.getElementById('edit-expert-inversao').value = info.inversaoOnus || 'Não informado';
+    document.getElementById('edit-expert-honorarios').value = info.honorarios || '';
+    document.getElementById('edit-expert-deposito').value = info.depositoJudicial || 'Não informado';
+    document.getElementById('edit-expert-data-honorarios').value = info.dataHonorarios || '';
+    document.getElementById('edit-expert-objeto').value = info.objetoPericia || '';
+  });
+
+  document.getElementById('btn-cancel-expert-edit').addEventListener('click', () => {
+    document.getElementById('expert-info-edit').style.display = 'none';
+    document.getElementById('expert-info-card').style.display = 'flex';
+  });
+
+  document.getElementById('btn-save-expert-edit').addEventListener('click', async () => {
+    if (!activeProcess) return;
+    
+    const honorariosVal = parseFloat(document.getElementById('edit-expert-honorarios').value);
+    activeProcess.expertInfo = {
+      autor: document.getElementById('edit-expert-autor').value.trim() || 'Não localizado',
+      reu: document.getElementById('edit-expert-reu').value.trim() || 'Não localizado',
+      perito: document.getElementById('edit-expert-perito').value.trim() || 'Não nomeado',
+      justicaGratuita: document.getElementById('edit-expert-jg').value,
+      cidadeEstado: document.getElementById('edit-expert-comarca').value.trim() || 'Não localizado',
+      inversaoOnus: document.getElementById('edit-expert-inversao').value,
+      honorarios: isNaN(honorariosVal) ? null : honorariosVal,
+      depositoJudicial: document.getElementById('edit-expert-deposito').value,
+      dataHonorarios: document.getElementById('edit-expert-data-honorarios').value || null,
+      objetoPericia: document.getElementById('edit-expert-objeto').value.trim() || 'Não localizado'
+    };
+
+    await ProcessService.update(activeProcess);
+    showToast("Ficha Técnica do Expert atualizada com sucesso!");
+    
+    // Atualiza visualização
+    renderExpertInfoCard(activeProcess);
+    document.getElementById('expert-info-edit').style.display = 'none';
+    document.getElementById('expert-info-card').style.display = 'flex';
+    await renderDashboard();
+  });
+
+  // Fechamento nos overlays
+  document.querySelectorAll('.md-dialog-overlay').forEach(overlay => {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        closeDialog(overlay.id);
+      }
+    });
+  });
+
+  // Formatação rápida de máscara CNJ no input de registro
+  const cnjInput = document.getElementById('reg-process-number');
+  cnjInput.addEventListener('input', (e) => {
+    let clean = e.target.value.replace(/[^0-9]/g, '');
+    if (clean.length > 20) clean = clean.substring(0, 20);
+    
+    // Se o CNJ estiver completo (20 dígitos), pre-seleciona o tribunal no form manual preventivamente!
+    if (clean.length === 20) {
+      const courtAlias = detectCourtFromCNJ(clean);
+      if (courtAlias) {
+        document.getElementById('reg-manual-court').value = courtAlias.toUpperCase();
+      }
+    }
+    
+    let formatted = clean;
+    if (clean.length > 7) {
+      formatted = `${clean.substring(0, 7)}-${clean.substring(7, 9)}`;
+      if (clean.length > 9) {
+        formatted += `.${clean.substring(9, 13)}`;
+        if (clean.length > 13) {
+          formatted += `.${clean.substring(13, 14)}`;
+          if (clean.length > 14) {
+            formatted += `.${clean.substring(14, 16)}`;
+            if (clean.length > 16) {
+              formatted += `.${clean.substring(16, 20)}`;
+            }
+          }
+        }
+      }
+    }
+    e.target.value = formatted;
+  });
+
+  // --- ABA DE GERENCIAMENTO DE DADOS (EXPORTAÇÃO/IMPORTAÇÃO/LIMPEZA COM SENHA) ---
+  const btnExport = document.getElementById('btn-export-data');
+  if (btnExport) {
+    btnExport.addEventListener('click', async () => {
+      const list = await ProcessService.getProcesses();
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(list, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `datajud_monitor_backup_${new Date().toISOString().slice(0,10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast("Backup exportado com sucesso!");
+    });
+  }
+
+  const btnImportTrigger = document.getElementById('btn-import-trigger');
+  if (btnImportTrigger) {
+    btnImportTrigger.addEventListener('click', () => {
+      document.getElementById('import-file-input').click();
+    });
+  }
+
+  const importFileInput = document.getElementById('import-file-input');
+  if (importFileInput) {
+    importFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const imported = JSON.parse(event.target.result);
+          if (!Array.isArray(imported)) throw new Error("O arquivo de backup é inválido.");
+
+          let count = 0;
+          for (const proc of imported) {
+            if (proc.numeroProcesso) {
+              proc.userEmail = currentUserEmail;
+              proc.id = `${currentUserEmail}_${proc.numeroProcesso}`;
+              await ProcessService.add(proc);
+              count++;
+            }
+          }
+          await renderDashboard();
+          showToast(`${count} processos importados com sucesso!`);
+        } catch (err) {
+          showToast("Erro ao importar backup: " + err.message);
+        }
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  const btnClearAll = document.getElementById('btn-clear-all-data');
+  if (btnClearAll) {
+    btnClearAll.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('btn-clear-all-data').style.display = 'none';
+      document.getElementById('clear-data-confirm-box').style.display = 'block';
+      document.getElementById('delete-confirm-password').value = '';
+    });
+  }
+
+  const btnCancelClear = document.getElementById('btn-cancel-clear-data');
+  if (btnCancelClear) {
+    btnCancelClear.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('clear-data-confirm-box').style.display = 'none';
+      document.getElementById('btn-clear-all-data').style.display = 'block';
+    });
+  }
+
+  const btnConfirmClear = document.getElementById('btn-confirm-clear-data');
+  if (btnConfirmClear) {
+    btnConfirmClear.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const password = document.getElementById('delete-confirm-password').value.trim();
+      if (!password) {
+        showToast("Por favor, digite sua senha de login.");
+        return;
+      }
+
+      try {
+        const response = await authFetch('/api/auth/verify-password', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ password })
+        });
+
+        if (!response.ok) {
+          throw new Error("Erro de comunicação com o servidor.");
+        }
+
+        const result = await response.json();
+        if (!result.valid) {
+          showToast("Senha incorreta! Operação cancelada.", 4000);
+          return;
+        }
+
+        // Se senha válida, limpa tudo
+        const processes = await ProcessService.getProcesses();
+        for (const p of processes) {
+          await ProcessService.remove(p.numeroProcesso);
+        }
+
+        showToast("Todos os processos locais foram apagados!");
+        await renderDashboard();
+        closeDialog('settings-dialog');
+        
+        // Reseta estado da caixa
+        document.getElementById('clear-data-confirm-box').style.display = 'none';
+        document.getElementById('btn-clear-all-data').style.display = 'block';
+      } catch (err) {
+        showToast("Erro ao verificar senha: " + err.message);
+      }
+    });
+  }
+
+  // --- SEGURANÇA: EXCLUSÃO INTEGRAL DE CONTA ---
+  const btnDeleteAccTrigger = document.getElementById('btn-delete-account-trigger');
+  if (btnDeleteAccTrigger) {
+    btnDeleteAccTrigger.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('btn-delete-account-trigger').style.display = 'none';
+      document.getElementById('delete-account-confirm-box').style.display = 'block';
+      document.getElementById('delete-account-password').value = '';
+      document.getElementById('delete-account-email').value = '';
+    });
+  }
+
+  const btnCancelDeleteAcc = document.getElementById('btn-cancel-delete-account');
+  if (btnCancelDeleteAcc) {
+    btnCancelDeleteAcc.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('delete-account-confirm-box').style.display = 'none';
+      document.getElementById('btn-delete-account-trigger').style.display = 'block';
+    });
+  }
+
+  const btnConfirmDeleteAcc = document.getElementById('btn-confirm-delete-account');
+  if (btnConfirmDeleteAcc) {
+    btnConfirmDeleteAcc.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const password = document.getElementById('delete-account-password').value.trim();
+      const email = document.getElementById('delete-account-email').value.trim();
+      
+      if (!password || !email) {
+        showToast("Por favor, digite sua senha e o e-mail de confirmação.");
+        return;
+      }
+      
+      if (email.toLowerCase() !== currentUserEmail.toLowerCase()) {
+        showToast("O e-mail informado não confere com a conta logada.");
+        return;
+      }
+      
+      if (!confirm("Esta ação excluirá PERMANENTEMENTE sua conta e TODOS os seus processos monitorados. Deseja prosseguir?")) {
+        return;
+      }
+      
+      try {
+        const response = await authFetch('/api/auth/delete-account', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ password, email })
+        });
+        
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || "Erro de comunicação com o servidor.");
+        }
+        
+        // Limpa tudo localmente do IndexedDB do usuário ativo
+        const processes = await ProcessService.getProcesses();
+        for (const p of processes) {
+          await ProcessService.remove(p.numeroProcesso);
+        }
+        
+        jwtToken = null;
+        currentUserEmail = null;
+        localStorage.clear();
+        
+        showToast("Sua conta e dados foram excluídos com sucesso!");
+        closeDialog('settings-dialog');
+        showAuthScreen();
+        
+        // Reseta estado
+        document.getElementById('delete-account-confirm-box').style.display = 'none';
+        document.getElementById('btn-delete-account-trigger').style.display = 'block';
+      } catch (err) {
+        showToast("Falha na exclusão da conta: " + err.message, 5000);
+      }
+    });
+  }
+
+  // --- BOTÕES E COMPORTAMENTO DE TAREFAS GLOBAIS ---
+  const btnDashAddTask = document.getElementById('btn-dash-add-task');
+  if (btnDashAddTask) {
+    btnDashAddTask.addEventListener('click', async () => {
+      // Popula select de processos ativos associados
+      const selectProc = document.getElementById('global-task-process');
+      selectProc.innerHTML = '';
+      
+      const list = await ProcessService.getProcesses();
+      const activeList = list.filter(p => !p.archived);
+      
+      if (activeList.length === 0) {
+        showToast("Por favor, cadastre um processo ativo antes de adicionar tarefas.");
+        return;
+      }
+      
+      activeList.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.numeroProcesso;
+        opt.textContent = `${formatProcessNumber(p.numeroProcesso)} (${p.expertInfo?.objetoPericia || 'Objeto não informado'})`;
+        selectProc.appendChild(opt);
+      });
+      
+      // Abre modal
+      document.getElementById('global-task-title').value = '';
+      document.getElementById('global-task-date').value = '';
+      document.getElementById('global-task-desc').value = '';
+      openDialog('add-global-task-dialog');
+    });
+  }
+
+  const btnSaveGlobalTask = document.getElementById('btn-save-global-task');
+  if (btnSaveGlobalTask) {
+    btnSaveGlobalTask.addEventListener('click', async () => {
+      const procNum = document.getElementById('global-task-process').value;
+      const title = document.getElementById('global-task-title').value.trim();
+      const date = document.getElementById('global-task-date').value;
+      const desc = document.getElementById('global-task-desc').value.trim();
+      
+      if (!title || !date) {
+        showToast("Por favor, preencha o título e a data limite da tarefa.");
+        return;
+      }
+      
+      const list = await ProcessService.getProcesses();
+      const proc = list.find(p => p.numeroProcesso === procNum);
+      if (!proc) {
+        showToast("Processo associado não encontrado.");
+        return;
+      }
+      
+      if (!proc.tasks) proc.tasks = [];
+      proc.tasks.push({
+        id: `task-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+        title: title,
+        date: date,
+        description: desc,
+        completed: false,
+        source: 'manual'
+      });
+      
+      await ProcessService.update(proc);
+      showToast("Tarefa criada com sucesso!");
+      closeDialog('add-global-task-dialog');
+      await renderDashboard();
+      
+      // Se a aba ativa for a de tarefas, atualiza
+      if (document.getElementById('btn-dash-tab-tasks').classList.contains('active')) {
+        await renderTasksDashboard();
+      }
+    });
+  }
+}
+
+function setupKeyVisibility(btnId, inputId, iconId) {
+  const btn = document.getElementById(btnId);
+  const input = document.getElementById(inputId);
+  const icon = document.getElementById(iconId);
+  
+  if (btn && input && icon) {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const isPass = input.type === 'password';
+      input.type = isPass ? 'text' : 'password';
+      icon.textContent = isPass ? 'visibility_off' : 'visibility';
+    });
+  }
+}
+
+/* ==========================================================================
+   LÓGICA DE CADASTRO E BUSCA
+   ========================================================================== */
+
+async function handleRegisterSubmit() {
+  const cnjInput = document.getElementById('reg-process-number').value.trim();
+  const cleanCNJ = cnjInput.replace(/[^0-9]/g, '');
+  const isAuto = document.getElementById('reg-auto-search').checked;
+
+  if (cleanCNJ.length !== 20) {
+    showToast('O número CNJ deve conter exatamente 20 dígitos numéricos.');
+    return;
+  }
+
+  const btnConfirm = document.getElementById('btn-confirm-register');
+  const btnText = btnConfirm.querySelector('span:not(.material-symbols-rounded)');
+  const btnIcon = btnConfirm.querySelector('.material-symbols-rounded');
+
+  btnConfirm.disabled = true;
+  btnText.textContent = 'Buscando...';
+  if (btnIcon) btnIcon.className = 'material-symbols-rounded spinning';
+
+  try {
+    let processObject = null;
+
+    if (isAuto) {
+      const courtAlias = detectCourtFromCNJ(cleanCNJ);
+      if (!courtAlias) {
+        throw new Error('Não foi possível identificar o tribunal a partir do número CNJ informado.');
+      }
+
+      // Pre-seleciona logo o tribunal no formulário manual preventivamente
+      document.getElementById('reg-manual-court').value = courtAlias.toUpperCase();
+
+      processObject = await fetchProcessFromAPI(cleanCNJ, courtAlias);
+    } else {
+      processObject = getManualFormData(cleanCNJ);
+    }
+
+    if (processObject) {
+      const added = await ProcessService.add(processObject);
+      if (added) {
+        showToast(`Processo ${formatProcessNumber(processObject.numeroProcesso)} cadastrado com sucesso!`);
+        closeDialog('register-process-dialog');
+        await renderDashboard();
+      } else {
+        showToast('Este processo já está cadastrado para monitoramento.');
+      }
+    }
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || 'Erro ao cadastrar o processo.');
+    
+    // O CNJ falhou ou deu timeout. Abre o formulário manual automaticamente com o tribunal pré-selecionado!
+    document.getElementById('reg-auto-search').checked = false;
+    document.getElementById('manual-form-container').style.display = 'block';
+    
+    const courtAlias = detectCourtFromCNJ(cleanCNJ);
+    if (courtAlias) {
+      document.getElementById('reg-manual-court').value = courtAlias.toUpperCase();
+    }
+    
+    showToast('A API do Datajud está lenta/instável. O formulário manual foi liberado abaixo com o tribunal pré-selecionado.', 6000);
+  } finally {
+    btnConfirm.disabled = false;
+    btnText.textContent = 'Cadastrar';
+    if (btnIcon) btnIcon.className = 'material-symbols-rounded';
+  }
+}
+
+// Executa a busca real no servidor proxy
+async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
+  const query = {
+    "size": 1,
+    "query": {
+      "match": {
+        "numeroProcesso": cleanCNJ
+      }
+    }
+  };
+
+  const response = await authFetch('/api/search', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': customApiKey
+    },
+    body: JSON.stringify({
+      tribunal: courtAlias,
+      query: query,
+      timeout: 4500 // Timeout rápido para cadastro inicial
+    })
+  });
+
+  if (!response.ok) {
+    let errMsg = 'Falha de conexão com o Datajud.';
+    try {
+      const errJSON = await response.json();
+      errMsg = errJSON.error || errMsg;
+    } catch(ex) {}
+    throw new Error(errMsg);
+  }
+
+  const data = await response.json();
+  const hits = data.hits?.hits || [];
+
+  if (hits.length === 0) {
+    throw new Error(`Processo não localizado ou indisponível temporariamente na API do tribunal ${courtAlias.toUpperCase()}.`);
+  }
+
+  const src = hits[0]._source;
+  
+  return {
+    id: hits[0]._id || `${src.tribunal}_${src.numeroProcesso}`,
+    numeroProcesso: src.numeroProcesso,
+    tribunal: src.tribunal || courtAlias.toUpperCase(),
+    grau: src.grau || 'G1',
+    classe: src.classe || { nome: 'Não classificado' },
+    assuntos: src.assuntos || [],
+    orgaoJulgador: src.orgaoJulgador || { nome: 'Não informado' },
+    dataAjuizamento: src.dataAjuizamento,
+    dataHoraUltimaAtualizacao: src.dataHoraUltimaAtualizacao,
+    formato: src.formato || { nome: 'Eletrônico' },
+    partes: (src.partes || []).map(p => ({
+      nome: p.pessoa ? p.pessoa.nome : (p.nome || 'Parte'),
+      polo: p.polo || 'ATIVO',
+      tipo: p.pessoa ? p.pessoa.tipo : 'Física',
+      numeroDocumentoPrincipal: p.pessoa ? p.pessoa.numeroDocumentoPrincipal : null
+    })),
+    movimentos: (src.movimentos || []).map(m => ({
+      nome: m.nome,
+      dataHora: m.dataHora,
+      detalhes: m.complementosTabelados ? m.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join(', ') : ''
+    }))
+  };
+}
+
+// Extrai e monta o objeto manual do formulário
+function getManualFormData(cleanCNJ) {
+  const courtSelect = document.getElementById('reg-manual-court').value;
+  const courtName = TRIBUNAIS.find(t => t.alias.toUpperCase() === courtSelect)?.nome || courtSelect;
+  const orgao = document.getElementById('reg-manual-orgao').value.trim() || 'Vara Não Informada';
+  const classe = document.getElementById('reg-manual-class').value.trim() || 'Ação Judicial';
+  const assunto = document.getElementById('reg-manual-subject').value.trim() || 'Assunto Geral';
+  const autor = document.getElementById('reg-manual-autor').value.trim() || 'Autor Não Informado';
+  const reu = document.getElementById('reg-manual-reu').value.trim() || 'Réu Não Informado';
+  const lastMov = document.getElementById('reg-manual-last-mov').value.trim() || 'Processo cadastrado manualmente.';
+
+  if (!courtSelect) throw new Error('Selecione o tribunal para o cadastro manual.');
+
+  const formattedCNJ = formatCNJRaw(cleanCNJ);
+
+  return {
+    id: `MANUAL_${courtSelect}_${cleanCNJ}`,
+    numeroProcesso: formattedCNJ,
+    tribunal: courtSelect,
+    grau: 'G1',
+    classe: { nome: classe },
+    assuntos: [{ nome: assunto }],
+    orgaoJulgador: { nome: orgao },
+    dataAjuizamento: new Date().toISOString(),
+    dataHoraUltimaAtualizacao: new Date().toISOString(),
+    formato: { nome: 'Físico/Manual' },
+    partes: [
+      { nome: autor, polo: 'ATIVO', tipo: 'Manual' },
+      { nome: reu, polo: 'PASSIVO', tipo: 'Manual' }
+    ],
+    movimentos: [
+      {
+        nome: 'Cadastro de Processo',
+        dataHora: new Date().toISOString(),
+        detalhes: lastMov
+      }
+    ]
+  };
+}
+
+/* ==========================================================================
+   LÓGICA DE UPLOAD E LEITURA DE PDF (CLIENT-SIDE COM LOADING BAR)
+   ========================================================================== */
+
+// Extrai o texto do PDF de forma 100% local no cliente (browser) usando PDF.js
+async function extractTextFromPdfClient(file, progressCallback) {
+  const arrayBuffer = await file.arrayBuffer();
+  
+  // Define o worker do PDF.js a partir da CDN
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+  
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+  const pdf = await loadingTask.promise;
+  const numPages = pdf.numPages;
+  let fullText = '';
+  
+  for (let i = 1; i <= numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items.map(item => item.str).join(' ');
+    fullText += pageText + '\n\n';
+    
+    if (progressCallback) {
+      progressCallback(i, numPages);
+    }
+  }
+  
+  return {
+    text: fullText,
+    numPages: numPages
+  };
+}
+
+async function handlePdfUpload(e) {
+  if (!activeProcess) return;
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const btnUpload = document.getElementById('btn-upload-pdf-trigger');
+  const btnUpdate = document.getElementById('btn-update-pdf-trigger');
+  const containerEmpty = document.getElementById('pdf-status-empty');
+  const containerActive = document.getElementById('pdf-status-active');
+  const containerLoading = document.getElementById('pdf-loading-container');
+  const fillBar = document.getElementById('pdf-loading-fill');
+  const textStatus = document.getElementById('pdf-loading-status');
+  const textPercent = document.getElementById('pdf-loading-percent');
+  const outdatedBanner = document.getElementById('pdf-outdated-banner');
+  
+  if (btnUpload) btnUpload.disabled = true;
+  if (btnUpdate) btnUpdate.disabled = true;
+
+  // Exibe a barra de progresso e oculta os cards de status
+  containerEmpty.style.display = 'none';
+  containerActive.style.display = 'none';
+  outdatedBanner.style.display = 'none';
+  containerLoading.style.display = 'flex';
+  
+  fillBar.style.width = '0%';
+  textStatus.textContent = "Abrindo arquivo PDF...";
+  textPercent.textContent = "0%";
+
+  try {
+    // REGRA DE NEGÓCIO: Deleta o PDF anterior do objeto explicitamente liberando memória
+    activeProcess.pdfText = null;
+    activeProcess.pdfName = null;
+    activeProcess.pdfSize = null;
+    activeProcess.pdfPages = null;
+    activeProcess.pdfUploadDate = null;
+    
+    // Extrai o texto localmente na máquina do usuário (rápido, sem carregar arquivos pro servidor)
+    const parsedData = await extractTextFromPdfClient(file, (current, total) => {
+      const pct = Math.round((current / total) * 100);
+      fillBar.style.width = `${pct}%`;
+      textPercent.textContent = `${pct}%`;
+      textStatus.textContent = `Lendo PDF localmente: página ${current} de ${total}`;
+    });
+
+    // Atualiza status do carregador antes da chamada da IA
+    fillBar.style.width = '99%';
+    textPercent.textContent = '99%';
+    textStatus.textContent = "Processando Ficha Técnica com IA...";
+
+    // Envia apenas as primeiras páginas (primeiros 15.000 caracteres) para a IA extrair dados básicos da petição
+    const sampleText = parsedData.text.substring(0, 15000);
+    let expertInfo = getInitialExpertInfo(activeProcess);
+    
+    try {
+      const response = await authFetch('/api/extract-pdf-metadata', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-key': geminiApiKey
+        },
+        body: JSON.stringify({
+          textSample: sampleText
+        })
+      });
+
+      if (response.ok) {
+        const resJSON = await response.json();
+        expertInfo = resJSON.expertInfo || expertInfo;
+      }
+    } catch (metadataErr) {
+      console.warn("Falha ao extrair ficha técnica via IA. Utilizando dados do Datajud:", metadataErr);
+    }
+
+    // Salva tudo no banco local IndexedDB
+    activeProcess.pdfText = parsedData.text;
+    activeProcess.pdfName = file.name;
+    activeProcess.pdfSize = file.size;
+    activeProcess.pdfPages = parsedData.numPages;
+    activeProcess.pdfUploadDate = new Date().toISOString();
+    activeProcess.expertInfo = expertInfo;
+    
+    // Se a IA extraiu a lista de todas as partes qualificadas no PDF, atualiza no cadastro do processo
+    if (expertInfo.todasPartes && expertInfo.todasPartes.length > 0) {
+      activeProcess.partes = expertInfo.todasPartes;
+    }
+    
+    // Reseta análises antigas de IA pois o PDF mudou
+    activeProcess.aiAnalysis = null;
+    activeProcess.aiAnalysisDate = null;
+
+    await ProcessService.update(activeProcess);
+    
+    fillBar.style.width = '100%';
+    textPercent.textContent = '100%';
+    textStatus.textContent = "Concluído!";
+
+    setTimeout(() => {
+      containerLoading.style.display = 'none';
+      openProcessDetails(activeProcess);
+      showToast("Texto do PDF processado e Ficha Técnica do Expert atualizada com sucesso!");
+    }, 600);
+    
+    await renderDashboard();
+  } catch(err) {
+    console.error("Erro no processamento do PDF:", err);
+    containerLoading.style.display = 'none';
+    renderPdfStatusCard(activeProcess); // Retorna visualização anterior
+    showToast(`Erro ao processar o PDF: ${err.message}`, 6000);
+  } finally {
+    if (btnUpload) btnUpload.disabled = false;
+    if (btnUpdate) btnUpdate.disabled = false;
+    e.target.value = ''; // Limpa o input
+  }
+}
+
+// Verifica se a cópia em PDF está desatualizada baseando-se nas datas das movimentações do Datajud
+function isPdfOutdated(process) {
+  if (!process.pdfText || !process.movimentos || process.movimentos.length === 0) return false;
+  
+  const latestMov = process.movimentos[0];
+  if (!latestMov.dataHora) return false;
+  
+  const date = new Date(latestMov.dataHora);
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  const formattedDate = `${day}/${month}/${year}`;
+  
+  const hasDate = process.pdfText.includes(formattedDate);
+  return !hasDate;
+}
+
+// Inicializa ficha técnica com base no retorno da API Datajud e órgão julgador
+function getInitialExpertInfo(process) {
+  const autor = process.partes?.filter(p => p.polo === 'ATIVO')?.map(p => p.nome).join(', ') || 'Não localizado';
+  const reu = process.partes?.filter(p => p.polo === 'PASSIVO')?.map(p => p.nome).join(', ') || 'Não localizado';
+  
+  let comarca = 'Não localizado';
+  if (process.orgaoJulgador && process.orgaoJulgador.nome) {
+    const organName = process.orgaoJulgador.nome.toUpperCase();
+    let cleanName = organName
+      .replace(/[0-9]+/g, '')
+      .replace(/VARA/g, '')
+      .replace(/CIVEL/g, '')
+      .replace(/CÍVEL/g, '')
+      .replace(/DE/g, '')
+      .replace(/DA/g, '')
+      .replace(/DO/g, '')
+      .replace(/JUIZADO/g, '')
+      .replace(/ESPECIAL/g, '')
+      .trim();
+    if (cleanName.length > 0) {
+      cleanName = cleanName.charAt(0) + cleanName.slice(1).toLowerCase();
+      comarca = `${cleanName}/${process.tribunal.toUpperCase()}`;
+    }
+  }
+
+  return {
+    autor: autor,
+    reu: reu,
+    perito: 'Não nomeado',
+    justicaGratuita: 'Não informado',
+    objetoPericia: 'Não localizado',
+    cidadeEstado: comarca,
+    inversaoOnus: 'Não informado',
+    honorarios: null,
+    depositoJudicial: 'Não informado',
+    dataHonorarios: null
+  };
+}
+
+/* ==========================================================================
+   RENDERIZAÇÃO DA TELA PRINCIPAL (DASHBOARD)
+   ========================================================================== */
+
+async function renderDashboard(filterQuery = '') {
+  const processes = await ProcessService.getProcesses();
+  const listContainer = document.getElementById('process-list-container');
+  const statTotal = document.getElementById('stat-total');
+  const statUpdated = document.getElementById('stat-updated');
+  const statOverdue = document.getElementById('stat-overdue-tasks');
+  const badgeTasks = document.getElementById('badge-overdue-tasks-count');
+
+  // Atualiza contador de radar em segundo plano
+  setTimeout(updateRadarBadgeCount, 100);
+
+  // Filtragem de ativos para as estatísticas
+  const activeProcesses = processes.filter(p => !p.archived);
+  statTotal.textContent = activeProcesses.length;
+  statUpdated.textContent = activeProcesses.filter(p => p.hasUpdate).length;
+
+  // Calcula tarefas atrasadas (apenas de processos ativos)
+  const overdueCount = calculateOverdueTasksCount(activeProcesses);
+  statOverdue.textContent = overdueCount;
+  if (overdueCount > 0) {
+    statOverdue.style.color = 'var(--md-sys-color-error)';
+    if (badgeTasks) {
+      badgeTasks.textContent = overdueCount;
+      badgeTasks.style.display = 'inline-flex';
+      badgeTasks.style.alignItems = 'center';
+      badgeTasks.style.justifyContent = 'center';
+    }
+  } else {
+    statOverdue.style.color = 'var(--md-sys-color-on-surface)';
+    if (badgeTasks) badgeTasks.style.display = 'none';
+  }
+
+  listContainer.innerHTML = '';
+
+  const showArchived = document.getElementById('toggle-show-archived')?.checked || false;
+  let filtered = processes.filter(p => showArchived || !p.archived);
+
+  if (filterQuery) {
+    const q = filterQuery.toLowerCase();
+    filtered = filtered.filter(p => 
+      p.numeroProcesso.includes(q) || 
+      p.tribunal.toLowerCase().includes(q) ||
+      p.classe?.nome?.toLowerCase().includes(q) ||
+      p.partes?.some(part => part.nome.toLowerCase().includes(q))
+    );
+  }
+
+  if (filtered.length === 0) {
+    if (processes.length === 0) {
+      document.getElementById('empty-state-monitored').style.display = 'flex';
+    } else {
+      listContainer.innerHTML = `
+        <div class="empty-state">
+          <span class="material-symbols-rounded empty-icon">find_in_page</span>
+          <h3>Nenhum processo encontrado</h3>
+          <p>Nenhum processo cadastrado corresponde aos termos da pesquisa.</p>
+        </div>
+      `;
+    }
+    return;
+  }
+
+  document.getElementById('empty-state-monitored').style.display = 'none';
+
+  filtered.forEach(proc => {
+    const autor = proc.partes?.find(p => p.polo === 'ATIVO')?.nome || 'Não informado';
+    const reu = proc.partes?.find(p => p.polo === 'PASSIVO')?.nome || 'Não informado';
+    
+    const card = document.createElement('div');
+    card.className = 'process-card';
+
+    // Se o processo estiver arquivado, reduz opacidade
+    if (proc.archived) {
+      card.style.opacity = '0.65';
+    }
+
+    // Se o PDF estiver desatualizado e não estiver arquivado, destaca a borda do card em vermelho!
+    const outdated = !proc.archived && isPdfOutdated(proc);
+    if (outdated) {
+      card.style.borderColor = 'var(--md-sys-color-error)';
+      card.style.boxShadow = '0 0 8px rgba(186, 26, 26, 0.15)';
+    }
+
+    const tAlias = proc.tribunal.toLowerCase();
+    let courtClass = 'tj';
+    if (tAlias.startsWith('trf')) courtClass = 'trf';
+    else if (tAlias.startsWith('trt')) courtClass = 'trt';
+    else if (['stj', 'tst', 'tse'].includes(tAlias)) courtClass = 'sup';
+
+    const lastCheckedStr = proc.lastChecked ? new Date(proc.lastChecked).toLocaleString('pt-BR') : 'Nunca';
+
+    card.innerHTML = `
+      ${proc.hasUpdate ? '<span class="card-notification-dot"></span>' : ''}
+      <div class="process-card-header">
+        <span class="process-card-number">${formatProcessNumber(proc.numeroProcesso)}</span>
+        <div style="display: flex; gap: 6px; align-items: center;">
+          ${outdated ? '<span class="badge-outdated"><span class="material-symbols-rounded">warning</span>PDF Desatualizado</span>' : ''}
+          <span class="court-chip ${courtClass}">${proc.tribunal.toUpperCase()}</span>
+        </div>
+      </div>
+      
+      <div class="process-card-details">
+        <div class="detail-row">
+          <span class="material-symbols-rounded">gavel</span>
+          <span><strong>Classe:</strong> ${proc.classe?.nome || 'Não classificada'}</span>
+        </div>
+        <div class="detail-row">
+          <span class="material-symbols-rounded">person</span>
+          <span><strong>Autor:</strong> ${autor}</span>
+        </div>
+        <div class="detail-row">
+          <span class="material-symbols-rounded">person_search</span>
+          <span><strong>Réu:</strong> ${reu}</span>
+        </div>
+      </div>
+      
+      <div class="process-card-footer">
+        <span>Última busca: ${lastCheckedStr}</span>
+        <div class="ai-status-indicator ${proc.aiAnalysis ? 'analyzed' : ''}">
+          <span class="material-symbols-rounded">${proc.aiAnalysis ? 'check_circle' : 'psychology'}</span>
+          <span>${proc.aiAnalysis ? 'IA Analisou' : 'Sem IA'}</span>
+        </div>
+      </div>
+    `;
+
+    card.addEventListener('click', () => {
+      openProcessDetails(proc);
+    });
+
+    listContainer.appendChild(card);
+  });
+}
+
+/* ==========================================================================
+   VISUALIZAÇÃO DE DETALHES DO PROCESSO (DIALOG)
+   ========================================================================== */
+
+async function openProcessDetails(process) {
+  activeProcess = process;
+
+  if (process.hasUpdate) {
+    process.hasUpdate = false;
+    await ProcessService.update(process);
+    await renderDashboard();
+  }
+
+  // Data de última busca/sincronização
+  const lblChecked = document.getElementById('modal-last-checked-label');
+  if (lblChecked) {
+    lblChecked.textContent = `Última busca: ${process.lastChecked ? new Date(process.lastChecked).toLocaleString('pt-BR') : 'Nunca'}`;
+  }
+
+  // Preenche metadados
+  document.getElementById('modal-court-badge').textContent = process.tribunal.toUpperCase();
+  document.getElementById('modal-process-number').textContent = formatProcessNumber(process.numeroProcesso);
+  document.getElementById('modal-classe').textContent = process.classe?.nome || 'Não classificada';
+  document.getElementById('modal-assunto').textContent = process.assuntos?.[0]?.nome || 'Geral';
+  document.getElementById('modal-orgao').textContent = process.orgaoJulgador?.nome || 'Vara única';
+  document.getElementById('modal-data-ajuizamento').textContent = process.dataAjuizamento ? new Date(process.dataAjuizamento).toLocaleDateString('pt-BR') : 'Não cadastrada';
+
+  // Inicializa ficha do expert se necessário
+  if (!process.expertInfo) {
+    process.expertInfo = getInitialExpertInfo(process);
+    await ProcessService.update(process);
+  }
+
+  // Exibe a Ficha Técnica do Expert
+  renderExpertInfoCard(process);
+  document.getElementById('expert-info-edit').style.display = 'none';
+  document.getElementById('expert-info-card').style.display = 'flex';
+
+  // Partes
+  const listAtivo = document.getElementById('modal-polo-ativo');
+  const listPassivo = document.getElementById('modal-polo-passivo');
+  listAtivo.innerHTML = '';
+  listPassivo.innerHTML = '';
+
+  const ativos = process.partes?.filter(p => p.polo === 'ATIVO') || [];
+  const passivos = process.partes?.filter(p => p.polo === 'PASSIVO') || [];
+
+  if (ativos.length === 0) {
+    listAtivo.innerHTML = '<div class="party-item-name">Autor não informado</div>';
+  } else {
+    ativos.forEach(p => {
+      const doc = p.numeroDocumentoPrincipal ? `<span class="party-item-doc">${formatDocument(p.numeroDocumentoPrincipal)}</span>` : '';
+      listAtivo.innerHTML += `
+        <div style="display: flex; flex-direction: column; margin-bottom: 6px;">
+          <span class="party-item-name">${p.nome}</span>
+          ${doc}
+        </div>
+      `;
+    });
+  }
+
+  if (passivos.length === 0) {
+    listPassivo.innerHTML = '<div class="party-item-name">Réu não informado</div>';
+  } else {
+    passivos.forEach(p => {
+      const doc = p.numeroDocumentoPrincipal ? `<span class="party-item-doc">${formatDocument(p.numeroDocumentoPrincipal)}</span>` : '';
+      listPassivo.innerHTML += `
+        <div style="display: flex; flex-direction: column; margin-bottom: 6px;">
+          <span class="party-item-name">${p.nome}</span>
+          ${doc}
+        </div>
+      `;
+    });
+  }
+
+  // Último andamento
+  const lastMov = process.movimentos?.[0];
+  if (lastMov) {
+    document.getElementById('modal-last-movement-desc').textContent = lastMov.detalhes || lastMov.nome;
+    document.getElementById('modal-last-movement-date').textContent = new Date(lastMov.dataHora).toLocaleString('pt-BR');
+  } else {
+    document.getElementById('modal-last-movement-desc').textContent = 'Sem movimentações catalogadas.';
+    document.getElementById('modal-last-movement-date').textContent = '';
+  }
+
+  // Timeline (Movimentações)
+  document.getElementById('modal-mov-count').textContent = process.movimentos?.length || 0;
+  const timeline = document.getElementById('modal-timeline');
+  timeline.innerHTML = '';
+
+  if (!process.movimentos || process.movimentos.length === 0) {
+    timeline.innerHTML = '<p style="text-align: center; color: var(--md-sys-color-outline);">Nenhuma movimentação para exibir.</p>';
+  } else {
+    process.movimentos.forEach(mov => {
+      const item = document.createElement('div');
+      item.className = 'timeline-item';
+      item.innerHTML = `
+        <div class="timeline-dot"></div>
+        <div class="timeline-content">
+          <span class="timeline-date">${new Date(mov.dataHora).toLocaleString('pt-BR')}</span>
+          <span class="timeline-desc">${mov.nome}</span>
+          ${mov.detalhes ? `<p class="timeline-details">${mov.detalhes}</p>` : ''}
+        </div>
+      `;
+      timeline.appendChild(item);
+    });
+  }
+
+  // Visualização e estado de arquivos PDF
+  renderPdfStatusCard(process);
+
+  // Estado da aba de Análise por IA
+  renderAIAnalysisTab();
+
+  // Configura ação do botão Unmonitor
+  const btnUnmonitor = document.getElementById('modal-btn-unmonitor');
+  const cloneUnmonitor = btnUnmonitor.cloneNode(true);
+  btnUnmonitor.parentNode.replaceChild(cloneUnmonitor, btnUnmonitor);
+  cloneUnmonitor.addEventListener('click', async () => {
+    if (confirm('Deseja realmente parar de monitorar e excluir localmente este processo?')) {
+      await ProcessService.remove(process.numeroProcesso);
+      closeDialog('process-detail-dialog');
+      await renderDashboard();
+    }
+  });
+
+  // Configura ação do botão Arquivar/Desarquivar
+  const btnArchive = document.getElementById('modal-btn-archive');
+  if (btnArchive) {
+    const cloneArchive = btnArchive.cloneNode(true);
+    btnArchive.parentNode.replaceChild(cloneArchive, btnArchive);
+    
+    // Atualiza ícone e rótulo do botão de arquivamento
+    const iconArchive = cloneArchive.querySelector('#modal-btn-archive-icon');
+    const txtArchive = cloneArchive.querySelector('#modal-btn-archive-text');
+    if (process.archived) {
+      if (iconArchive) iconArchive.textContent = 'unarchive';
+      if (txtArchive) txtArchive.textContent = 'Desarquivar';
+    } else {
+      if (iconArchive) iconArchive.textContent = 'archive';
+      if (txtArchive) txtArchive.textContent = 'Arquivar';
+    }
+
+    cloneArchive.addEventListener('click', async () => {
+      process.archived = !process.archived;
+      await ProcessService.update(process);
+      showToast(process.archived ? "Processo arquivado!" : "Processo desarquivado!");
+      closeDialog('process-detail-dialog');
+      await renderDashboard();
+    });
+  }
+
+  // Abre o modal de detalhes
+  openDialog('process-detail-dialog');
+  
+  // REGRA DE NEGÓCIO: Sincronização automática e silenciosa em segundo plano ao abrir o processo!
+  setTimeout(() => syncSingleProcessSilently(process.numeroProcesso), 500);
+}
+
+// Preenche dados da Ficha Técnica do Expert na tela
+function renderExpertInfoCard(process) {
+  const info = process.expertInfo || {};
+  document.getElementById('expert-val-autor').textContent = info.autor || 'Não localizado';
+  document.getElementById('expert-val-reu').textContent = info.reu || 'Não localizado';
+  document.getElementById('expert-val-perito').textContent = info.perito || 'Não nomeado';
+  document.getElementById('expert-val-jg').textContent = info.justicaGratuita || 'Não informado';
+  document.getElementById('expert-val-comarca').textContent = info.cidadeEstado || 'Não localizado';
+  document.getElementById('expert-val-inversao').textContent = info.inversaoOnus || 'Não informado';
+  
+  // Honorários e Depósito Judicial
+  const honorariosBase = info.honorarios ? formatCurrency(info.honorarios) : 'Não informado';
+  document.getElementById('expert-val-honorarios').textContent = honorariosBase;
+  document.getElementById('expert-val-deposito').textContent = info.depositoJudicial || 'Não informado';
+  
+  const honorariosCorrigidos = info.honorarios ? calculateUpdatedFees(info.honorarios, info.dataHonorarios, process.tribunal) : 'Não informado';
+  document.getElementById('expert-val-honorarios-corrigido').textContent = honorariosCorrigidos;
+  
+  document.getElementById('expert-val-objeto').textContent = info.objetoPericia || 'Não localizado';
+}
+
+// Controla exibição das caixas e tarjas de PDF no modal de detalhes
+function renderPdfStatusCard(process) {
+  const emptyState = document.getElementById('pdf-status-empty');
+  const activeState = document.getElementById('pdf-status-active');
+  const outdatedBanner = document.getElementById('pdf-outdated-banner');
+  const containerLoading = document.getElementById('pdf-loading-container');
+
+  // Garante que o loading esteja oculto se não estiver indexando
+  containerLoading.style.display = 'none';
+
+  if (process.pdfText) {
+    emptyState.style.display = 'none';
+    activeState.style.display = 'block';
+    
+    document.getElementById('pdf-info-filename').textContent = process.pdfName || 'processo_anexado.pdf';
+    
+    const sizeKB = Math.round((process.pdfSize || 0) / 1024);
+    const pages = process.pdfPages || 0;
+    const chars = process.pdfText.length;
+    document.getElementById('pdf-info-details').textContent = `Tamanho: ${sizeKB} KB | Páginas: ${pages} | Texto extraído: ${chars} caracteres`;
+
+    const isOutdated = isPdfOutdated(process);
+    outdatedBanner.style.display = isOutdated ? 'flex' : 'none';
+  } else {
+    emptyState.style.display = 'flex';
+    activeState.style.display = 'none';
+    outdatedBanner.style.display = 'none';
+  }
+}
+
+// Atualiza a visualização interna da aba AI de acordo com o estado do processo e PDF
+function renderAIAnalysisTab() {
+  const emptyState = document.getElementById('ai-empty-state');
+  const loadingState = document.getElementById('ai-loading-state');
+  const resultState = document.getElementById('ai-result-state');
+
+  // SE NÃO HOUVER PDF, BLOQUEIA TOTAL A ANÁLISE POR IA
+  if (!activeProcess.pdfText) {
+    emptyState.style.display = 'flex';
+    loadingState.style.display = 'none';
+    resultState.style.display = 'none';
+
+    emptyState.querySelector('h4').textContent = "⚠️ Cópia em PDF Necessária";
+    emptyState.querySelector('p').textContent = "Para realizar a análise jurídica por inteligência artificial (inclusive prazos CPC), você deve anexar o arquivo PDF do processo na aba Resumo primeiro. A IA lerá o conteúdo integral do arquivo anexado.";
+    emptyState.querySelector('#btn-generate-ai-analysis').style.display = 'none'; // esconde botão
+    return;
+  }
+
+  emptyState.querySelector('#btn-generate-ai-analysis').style.display = 'inline-flex';
+  emptyState.querySelector('h4').textContent = "Análise Jurídica por IA (Expert)";
+  emptyState.querySelector('p').textContent = "O Gemini lerá o texto completo extraído do seu arquivo PDF para elaborar o resumo do caso, histórico da perícia, e monitoramento de prazos processuais (CPC).";
+
+  if (activeProcess.aiAnalysis) {
+    emptyState.style.display = 'none';
+    loadingState.style.display = 'none';
+    resultState.style.display = 'block';
+
+    document.getElementById('ai-analysis-text').innerHTML = parseMarkdown(activeProcess.aiAnalysis);
+    
+    const d = activeProcess.aiAnalysisDate ? new Date(activeProcess.aiAnalysisDate).toLocaleString('pt-BR') : '';
+    document.getElementById('ai-analysis-date').textContent = d ? `Análise realizada em: ${d}` : 'Data indisponível';
+  } else {
+    emptyState.style.display = 'flex';
+    loadingState.style.display = 'none';
+    resultState.style.display = 'none';
+  }
+}
+
+/* ==========================================================================
+   SINCRONIZAÇÃO AUTOMÁTICA EM SEGUNDO PLANO (SILENCIOSA)
+   ========================================================================== */
+
+// Sincroniza silenciosamente um único processo (chamado ao abrir o modal)
+async function syncSingleProcessSilently(processNumber) {
+  try {
+    const list = await ProcessService.getProcesses();
+    const index = list.findIndex(p => p.numeroProcesso === processNumber);
+    if (index === -1) return;
+    const proc = list[index];
+
+    const cleanCNJ = processNumber.replace(/[^0-9]/g, '');
+    const courtAlias = detectCourtFromCNJ(cleanCNJ);
+    if (!courtAlias) return;
+
+    const query = {
+      "size": 1,
+      "query": {
+        "match": {
+          "numeroProcesso": cleanCNJ
+        }
+      }
+    };
+
+    const response = await authFetch('/api/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': customApiKey
+      },
+      body: JSON.stringify({
+        tribunal: courtAlias,
+        query: query,
+        timeout: 25000 // Limite de 25 segundos para tolerar API lenta do Datajud
+      })
+    });
+
+    if (!response.ok) return; // Falha silenciosamente em caso de instabilidade na API pública
+
+    const data = await response.json();
+    const hits = data.hits?.hits || [];
+
+    if (hits.length > 0) {
+      const src = hits[0]._source;
+      const apiUpdate = src.dataHoraUltimaAtualizacao;
+      const apiMovs = src.movimentos?.length || 0;
+      const localMovs = proc.movimentos?.length || 0;
+
+      if (apiUpdate !== proc.dataHoraUltimaAtualizacao || apiMovs > localMovs) {
+        proc.dataHoraUltimaAtualizacao = apiUpdate;
+        proc.movimentos = (src.movimentos || []).map(m => ({
+          nome: m.nome,
+          dataHora: m.dataHora,
+          detalhes: m.complementosTabelados ? m.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join(', ') : ''
+        }));
+        proc.hasUpdate = true;
+        
+        await ProcessService.update(proc);
+        
+        // Se o processo que está atualmente aberto for o mesmo que atualizou, atualiza a tela dinamicamente!
+        if (activeProcess && activeProcess.numeroProcesso === processNumber) {
+          activeProcess = proc;
+          
+          document.getElementById('modal-last-movement-desc').textContent = proc.movimentos[0]?.detalhes || proc.movimentos[0]?.nome || '-';
+          document.getElementById('modal-last-movement-date').textContent = new Date(proc.movimentos[0]?.dataHora).toLocaleString('pt-BR');
+          
+          document.getElementById('modal-mov-count').textContent = proc.movimentos.length;
+          const timeline = document.getElementById('modal-timeline');
+          timeline.innerHTML = '';
+          
+          proc.movimentos.forEach(mov => {
+            const item = document.createElement('div');
+            item.className = 'timeline-item';
+            item.innerHTML = `
+              <div class="timeline-dot"></div>
+              <div class="timeline-content">
+                <span class="timeline-date">${new Date(mov.dataHora).toLocaleString('pt-BR')}</span>
+                <span class="timeline-desc">${mov.nome}</span>
+                ${mov.detalhes ? `<p class="timeline-details">${mov.detalhes}</p>` : ''}
+              </div>
+            `;
+            timeline.appendChild(item);
+          });
+          
+          renderPdfStatusCard(proc);
+        }
+
+        showToast("Novas publicações encontradas no Datajud! Base de dados local atualizada.");
+        await renderDashboard();
+      }
+    }
+  } catch (err) {
+    console.warn(`[Auto-Sync] Falha silenciosa ao sincronizar processo ${processNumber}:`, err);
+  }
+}
+
+// Busca atualizações para todos os processos monitorados em segundo plano (na inicialização)
+async function syncAllMonitoredSilently() {
+  const processes = await ProcessService.getProcesses();
+  if (processes.length === 0) return;
+
+  console.log(`[Auto-Sync] Iniciando varredura silenciosa em ${processes.length} processos...`);
+  
+  // Faz a varredura sequencial para não sobrecarregar as requisições
+  for (const proc of processes) {
+    await syncSingleProcessSilently(proc.numeroProcesso);
+    // Pequeno intervalo entre requisições
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  
+  console.log('[Auto-Sync] Varredura silenciosa de processos finalizada!');
+}
+
+/* ==========================================================================
+   INTEGRAÇÃO COM A API DO GEMINI (ANÁLISE POR IA BASEADA EM PDF)
+   ========================================================================== */
+
+async function generateAIAnalysis() {
+  if (!activeProcess || !activeProcess.pdfText) {
+    showToast('Anexe o arquivo PDF primeiro na aba Resumo.');
+    return;
+  }
+
+  const emptyState = document.getElementById('ai-empty-state');
+  const loadingState = document.getElementById('ai-loading-state');
+  const resultState = document.getElementById('ai-result-state');
+  const statusText = document.getElementById('ai-loading-status-text');
+
+  emptyState.style.display = 'none';
+  resultState.style.display = 'none';
+  loadingState.style.display = 'flex';
+
+  const statusMessages = [
+    "Lendo arquivo PDF do processo...",
+    "Localizando a qualificação do expert...",
+    "Filtrando quesitos e nomeações de assistentes...",
+    "Calculando e cruzando prazos processuais (CPC)...",
+    "Estruturando parecer da inteligência artificial...",
+    "Formatando parecer jurídico em Markdown..."
+  ];
+
+  let msgIdx = 0;
+  statusText.textContent = statusMessages[0];
+  const timer = setInterval(() => {
+    msgIdx = (msgIdx + 1) % statusMessages.length;
+    statusText.textContent = statusMessages[msgIdx];
+  }, 1800);
+
+  try {
+    const payload = {
+      numeroProcesso: activeProcess.numeroProcesso,
+      pdfText: activeProcess.pdfText
+    };
+
+    const response = await authFetch('/api/analyze-process', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-gemini-key': geminiApiKey
+      },
+      body: JSON.stringify({
+        processData: payload
+      })
+    });
+
+    clearInterval(timer);
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.details || err.error || 'Erro interno na chamada do Gemini.');
+    }
+
+    const result = await response.json();
+    
+    activeProcess.aiAnalysis = result.analysis;
+    activeProcess.aiAnalysisDate = new Date().toISOString();
+    
+    // Atualiza a Ficha Técnica com os dados extraídos pelo parecer completo
+    if (!activeProcess.expertInfo) {
+      activeProcess.expertInfo = {};
+    }
+    if (result.perito && result.perito !== 'Não nomeado') {
+      activeProcess.expertInfo.perito = result.perito;
+    }
+    if (result.inversaoOnus && result.inversaoOnus !== 'Não informado') {
+      activeProcess.expertInfo.inversaoOnus = result.inversaoOnus;
+    }
+    
+    // Salva novas informações financeiras extraídas pela IA
+    if (result.honorarios) {
+      activeProcess.expertInfo.honorarios = parseFloat(result.honorarios);
+    }
+    if (result.depositoJudicial && result.depositoJudicial !== 'Não informado') {
+      activeProcess.expertInfo.depositoJudicial = result.depositoJudicial;
+    }
+    if (result.dataHonorarios) {
+      activeProcess.expertInfo.dataHonorarios = result.dataHonorarios;
+    }
+    
+    // Converte os prazos forenses calculados pela IA em tarefas do perito
+    if (result.deadlines && Array.isArray(result.deadlines)) {
+      activeProcess.tasks = result.deadlines.map((d, index) => ({
+        id: `task-${Date.now()}-${index}`,
+        title: d.title,
+        date: d.date,
+        description: d.description,
+        cpcArticle: d.cpcArticle,
+        completed: false,
+        source: 'ia'
+      }));
+    } else {
+      activeProcess.tasks = [];
+    }
+    
+    await ProcessService.update(activeProcess);
+    await renderDashboard();
+    renderExpertInfoCard(activeProcess); // Atualiza os campos do card na hora!
+    renderAIAnalysisTab();
+    
+    showToast('Análise baseada no PDF concluída com sucesso!');
+  } catch (err) {
+    clearInterval(timer);
+    console.error(err);
+    
+    if (err.message.includes('Chave de API do Gemini não configurada') || err.message.includes('Chave do Gemini não configurada')) {
+      showToast('Chave de API do Gemini não configurada. Insira sua chave nas Configurações da aplicação.', 6000);
+      // Abre automaticamente o diálogo de configurações após um breve atraso para ajudar o usuário!
+      setTimeout(() => openDialog('settings-dialog'), 1200);
+    } else {
+      showToast(`Falha na análise por IA: ${err.message}`, 5000);
+    }
+    
+    emptyState.style.display = 'flex';
+    loadingState.style.display = 'none';
+    resultState.style.display = 'none';
+  }
+}
+
+// Copiar parecer de IA
+function copyAIAnalysisText() {
+  if (!activeProcess || !activeProcess.aiAnalysis) return;
+  
+  navigator.clipboard.writeText(activeProcess.aiAnalysis)
+    .then(() => showToast('Parecer jurídico copiado para a área de transferência.'))
+    .catch(err => {
+      console.error('Erro ao copiar:', err);
+      showToast('Não foi possível copiar o texto automaticamente.');
+    });
+}
+
+/* ==========================================================================
+   CONFIGURAÇÕES: SALVAR, EXPORTAR E IMPORTAR
+   ========================================================================== */
+
+async function saveSettings() {
+  const dKey = document.getElementById('settings-datajud-key').value.trim();
+  const gKey = document.getElementById('settings-gemini-key').value.trim();
+
+  customApiKey = dKey;
+  geminiApiKey = gKey;
+
+  localStorage.setItem('datajud_api_key', dKey);
+  localStorage.setItem('gemini_api_key', gKey);
+
+  closeDialog('settings-dialog');
+  await renderDashboard();
+  showToast('Configurações salvas!');
+}
+
+async function exportData() {
+  const processes = await ProcessService.getProcesses();
+  if (processes.length === 0) {
+    showToast('Não há dados cadastrados para exportação.');
+    return;
+  }
+
+  const jsonStr = JSON.stringify(processes, null, 2);
+  const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(jsonStr);
+  const filename = `datajud_monitor_backup_${new Date().toISOString().slice(0,10)}.json`;
+
+  const link = document.createElement('a');
+  link.setAttribute('href', dataUri);
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  showToast('Backup exportado com sucesso!');
+}
+
+async function importData(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = async function(event) {
+    try {
+      const imported = JSON.parse(event.target.result);
+      if (!Array.isArray(imported)) throw new Error();
+
+      const current = await ProcessService.getProcesses();
+      let addedCount = 0;
+
+      imported.forEach(proc => {
+        if (proc.numeroProcesso && !current.some(c => c.numeroProcesso === proc.numeroProcesso)) {
+          current.push(proc);
+          addedCount++;
+        }
+      });
+
+      await ProcessService.saveAll(current);
+      await renderDashboard();
+      showToast(`Importação finalizada! ${addedCount} novos processos importados.`);
+    } catch (err) {
+      showToast('Erro ao importar arquivo JSON. Formato corrompido ou inválido.');
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+async function clearAllLocalData() {
+  if (confirm('ATENÇÃO: Isso apagará de forma PERMANENTE todos os seus processos monitorados e pareceres. Deseja prosseguir?')) {
+    const db = await getDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).clear();
+    tx.oncomplete = async () => {
+      await renderDashboard();
+      showToast('Todos os processos foram apagados.');
+      closeDialog('settings-dialog');
+    };
+  }
+}
+
+/* ==========================================================================
+   UTILITÁRIOS E FORMATADORES
+   ========================================================================== */
+
+function formatProcessNumber(num) {
+  const clean = num.replace(/[^0-9]/g, '');
+  if (clean.length !== 20) return num;
+  
+  return `${clean.substring(0,7)}-${clean.substring(7,9)}.${clean.substring(9,13)}.${clean.substring(13,14)}.${clean.substring(14,16)}.${clean.substring(16,20)}`;
+}
+
+function formatCNJRaw(clean) {
+  if (clean.length !== 20) return clean;
+  return `${clean.substring(0,7)}${clean.substring(7,9)}${clean.substring(9,13)}${clean.substring(13,14)}${clean.substring(14,16)}${clean.substring(16,20)}`;
+}
+
+function formatDocument(doc) {
+  const clean = doc.replace(/[^0-9]/g, '');
+  if (clean.length === 11) {
+    return `${clean.substring(0,3)}.${clean.substring(3,6)}.${clean.substring(6,9)}-${clean.substring(9,11)}`;
+  } else if (clean.length === 14) {
+    return `${clean.substring(0,2)}.${clean.substring(2,5)}.${clean.substring(5,8)}/${clean.substring(8,12)}-${clean.substring(12,14)}`;
+  }
+  return doc;
+}
+
+function showToast(message, duration = 3500) {
+  const container = document.getElementById('snackbar-container');
+  const toast = document.createElement('div');
+  toast.className = 'snackbar';
+  toast.innerHTML = `
+    <span class="snackbar-text">${message}</span>
+    <button class="snackbar-action" onclick="this.parentElement.remove()">OK</button>
+  `;
+  
+  container.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s ease';
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+// Interpretador simples de markdown jurídico com suporte a tabelas
+function parseMarkdown(text) {
+  if (!text) return '';
+  const lines = text.split('\n');
+  let html = '';
+  let inList = false;
+  let inBlockquote = false;
+  let inTable = false;
+
+  for (let line of lines) {
+    line = line.trim();
+    if (!line) {
+      if (inList) { html += '</ul>'; inList = false; }
+      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
+      if (inTable) { html += '</tbody></table>'; inTable = false; }
+      continue;
+    }
+
+    // Tabela em Markdown
+    if (line.startsWith('|')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
+      
+      const cells = line.split('|').map(c => c.trim()).filter((c, i, arr) => i > 0 && i < arr.length - 1);
+      
+      if (line.includes('---') || line.includes('===') || cells.every(c => c.match(/^[:\-]+$/))) {
+        continue;
+      }
+      
+      if (!inTable) {
+        html += '<table><thead><tr>';
+        cells.forEach(c => {
+          html += `<th>${c}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+        inTable = true;
+      } else {
+        html += '<tr>';
+        cells.forEach(c => {
+          html += `<td>${c}</td>`;
+        });
+        html += '</tr>';
+      }
+      continue;
+    } else {
+      if (inTable) { html += '</tbody></table>'; inTable = false; }
+    }
+
+    // Alertas (blockquote)
+    if (line.startsWith('>')) {
+      if (!inBlockquote) {
+        if (inList) { html += '</ul>'; inList = false; }
+        html += '<blockquote>';
+        inBlockquote = true;
+      }
+      line = line.substring(1).trim();
+    } else {
+      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
+    }
+
+    // Headings
+    if (line.startsWith('###')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += `<h3>${line.substring(3).trim()}</h3>`;
+    } else if (line.startsWith('##')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += `<h2>${line.substring(2).trim()}</h2>`;
+    } else if (line.startsWith('#')) {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += `<h1>${line.substring(1).trim()}</h1>`;
+    }
+    // Listas
+    else if (line.startsWith('-') || line.startsWith('*')) {
+      if (!inList) {
+        html += '<ul>';
+        inList = true;
+      }
+      html += `<li>${line.substring(1).trim()}</li>`;
+    }
+    // Parágrafos
+    else {
+      if (inList) { html += '</ul>'; inList = false; }
+      html += `<p>${line}</p>`;
+    }
+  }
+
+  if (inList) html += '</ul>';
+  if (inBlockquote) html += '</blockquote>';
+  if (inTable) html += '</tbody></table>';
+
+  // Negrito e Itálico
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  
+  // Iconização
+  html = html.replace(/📋/g, '<span class="material-symbols-rounded" style="vertical-align: middle; margin-right: 4px; color: var(--md-sys-color-primary);">assignment</span>');
+  html = html.replace(/⚖️/g, '<span class="material-symbols-rounded" style="vertical-align: middle; margin-right: 4px; color: var(--md-sys-color-primary);">gavel</span>');
+  html = html.replace(/⚠️/g, '<span class="material-symbols-rounded" style="vertical-align: middle; margin-right: 4px; color: var(--md-sys-color-error);">warning</span>');
+  html = html.replace(/🚀/g, '<span class="material-symbols-rounded" style="vertical-align: middle; margin-right: 4px; color: var(--md-sys-color-success);">rocket_launch</span>');
+
+  return html;
+}
+
+/* ==========================================================================
+   MÓDULO DE AGENDA E TAREFAS DO PERITO (CALENDÁRIO & TO-DO)
+   ========================================================================== */
+
+// Inicializa e renderiza a aba de Agenda e Tarefas
+function renderAgendaTab() {
+  if (!activeProcess) return;
+
+  // Se o processo ainda não possui o array de tarefas, inicializa vazio
+  if (!activeProcess.tasks) {
+    activeProcess.tasks = [];
+  }
+
+  // Define mês e ano padrão baseados na data do primeiro prazo ou na data de hoje
+  if (activeProcess.tasks.length > 0 && !selectedCalendarDateStr) {
+    const sortedTasks = [...activeProcess.tasks].filter(t => t.date).sort((a,b) => new Date(a.date) - new Date(b.date));
+    if (sortedTasks.length > 0) {
+      const firstTaskDate = new Date(sortedTasks[0].date + 'T00:00:00');
+      currentCalendarMonth = firstTaskDate.getMonth();
+      currentCalendarYear = firstTaskDate.getFullYear();
+    }
+  }
+
+  renderCalendarWidget();
+  renderTasksList();
+}
+
+// Renderiza a grade de dias do calendário
+function renderCalendarWidget() {
+  const container = document.getElementById('calendar-days-container');
+  const monthYearLabel = document.getElementById('calendar-month-year');
+  container.innerHTML = '';
+
+  const monthNames = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+  ];
+
+  monthYearLabel.textContent = `${monthNames[currentCalendarMonth]} ${currentCalendarYear}`;
+
+  // Primeiro dia do mês e total de dias do mês
+  const firstDayIndex = new Date(currentCalendarYear, currentCalendarMonth, 1).getDay();
+  const totalDays = new Date(currentCalendarYear, currentCalendarMonth + 1, 0).getDate();
+
+  // Dias em branco do mês anterior para alinhar o dia 1 da semana
+  for (let i = 0; i < firstDayIndex; i++) {
+    const emptyCell = document.createElement('div');
+    emptyCell.className = 'calendar-day-cell empty';
+    container.appendChild(emptyCell);
+  }
+
+  const today = new Date();
+
+  // Dias reais do mês
+  for (let day = 1; day <= totalDays; day++) {
+    const dayCell = document.createElement('div');
+    dayCell.className = 'calendar-day-cell';
+    dayCell.textContent = day;
+
+    const dateStr = `${currentCalendarYear}-${String(currentCalendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+    // Marca se for o dia de hoje
+    if (today.getDate() === day && today.getMonth() === currentCalendarMonth && today.getFullYear() === currentCalendarYear) {
+      dayCell.classList.add('today');
+    }
+
+    // Verifica se possui prazos/tarefas agendadas nesta data
+    const hasDeadlines = activeProcess.tasks?.some(t => t.date === dateStr && !t.completed);
+    if (hasDeadlines) {
+      dayCell.classList.add('has-deadline');
+    }
+
+    // Se for o dia selecionado atualmente, destaca-o
+    if (selectedCalendarDateStr === dateStr) {
+      dayCell.classList.add('selected');
+    }
+
+    dayCell.addEventListener('click', () => {
+      document.querySelectorAll('.calendar-day-cell').forEach(c => c.classList.remove('selected'));
+      dayCell.classList.add('selected');
+      selectedCalendarDateStr = dateStr;
+      renderSelectedDayDetails(dateStr);
+    });
+
+    container.appendChild(dayCell);
+  }
+
+  // Atualiza detalhes do dia selecionado
+  if (selectedCalendarDateStr) {
+    renderSelectedDayDetails(selectedCalendarDateStr);
+  } else {
+    document.getElementById('selected-day-title').textContent = "Selecione uma data no calendário";
+    document.getElementById('calendar-selected-day-details').innerHTML = `
+      <p style="font-size: 11px; color: var(--md-sys-color-on-surface-variant); margin: 0;">Nenhum prazo selecionado no momento.</p>
+    `;
+  }
+}
+
+// Renderiza os prazos específicos da data clicada no calendário
+function renderSelectedDayDetails(dateStr) {
+  const title = document.getElementById('selected-day-title');
+  const detailsContainer = document.getElementById('calendar-selected-day-details');
+
+  const [year, month, day] = dateStr.split('-');
+  const dateFormatted = `${day}/${month}/${year}`;
+  title.textContent = `Prazos em ${dateFormatted}:`;
+
+  const dayDeadlines = activeProcess.tasks?.filter(t => t.date === dateStr) || [];
+
+  if (dayDeadlines.length === 0) {
+    detailsContainer.innerHTML = `
+      <p style="font-size: 11px; color: var(--md-sys-color-on-surface-variant); margin: 0;">Não há prazos agendados para este dia.</p>
+    `;
+  } else {
+    detailsContainer.innerHTML = '';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'selected-day-deadlines';
+
+    dayDeadlines.forEach(t => {
+      const item = document.createElement('div');
+      item.className = 'day-deadline-item';
+      if (t.completed) {
+        item.style.borderLeftColor = 'var(--md-sys-color-outline)';
+        item.style.backgroundColor = 'var(--md-sys-color-surface-variant)';
+        item.style.color = 'var(--md-sys-color-on-surface-variant)';
+        item.style.opacity = '0.7';
+      }
+      item.innerHTML = `
+        <h5>${t.title} ${t.completed ? '(Concluída)' : ''}</h5>
+        <p>${t.description || ''}</p>
+        ${t.cpcArticle ? `<strong style="font-size: 10px; display: block; margin-top: 4px;">Fundamento: ${t.cpcArticle}</strong>` : ''}
+      `;
+      wrapper.appendChild(item);
+    });
+    detailsContainer.appendChild(wrapper);
+  }
+}
+
+// Renderiza a lista de tarefas do perito (Checklist To-do)
+function renderTasksList() {
+  const container = document.getElementById('tasks-list-container');
+  container.innerHTML = '';
+
+  if (!activeProcess.tasks || activeProcess.tasks.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state" style="padding: 20px 0;">
+        <span class="material-symbols-rounded empty-icon" style="font-size: 36px;">checklist</span>
+        <h4 style="font-size: 13px;">Nenhuma tarefa gerada</h4>
+        <p style="font-size: 11px; max-width: 250px;">Gere a Análise por IA na aba ao lado para carregar os prazos do PDF ou adicione uma tarefa manual.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Ordena as tarefas: não concluídas primeiro, depois por data
+  const sortedTasks = [...activeProcess.tasks].sort((a, b) => {
+    if (a.completed !== b.completed) {
+      return a.completed ? 1 : -1;
+    }
+    return new Date(a.date || '9999-12-31') - new Date(b.date || '9999-12-31');
+  });
+
+  sortedTasks.forEach(task => {
+    const item = document.createElement('div');
+    item.className = 'task-item-checkbox';
+
+    const dateLabel = task.date ? new Date(task.date + 'T00:00:00').toLocaleDateString('pt-BR') : 'Sem data';
+
+    item.innerHTML = `
+      <input type="checkbox" id="chk-${task.id}" ${task.completed ? 'checked' : ''}>
+      <div class="task-checkbox-details">
+        <span class="task-checkbox-title">${task.title}</span>
+        <span class="task-checkbox-desc">${task.description || ''}</span>
+        <div class="task-checkbox-badge-row">
+          <span class="task-date-badge">${dateLabel}</span>
+          ${task.cpcArticle ? `<span class="task-cpc-badge">${task.cpcArticle}</span>` : ''}
+        </div>
+      </div>
+      <button class="md-btn-icon task-delete-btn" id="del-${task.id}" title="Excluir Tarefa">
+        <span class="material-symbols-rounded" style="font-size: 18px;">delete</span>
+      </button>
+    `;
+
+    // Toggle de conclusão de tarefa
+    const checkbox = item.querySelector('input[type="checkbox"]');
+    checkbox.addEventListener('change', async (e) => {
+      const idx = activeProcess.tasks.findIndex(t => t.id === task.id);
+      if (idx !== -1) {
+        activeProcess.tasks[idx].completed = e.target.checked;
+        await ProcessService.update(activeProcess);
+        renderCalendarWidget();
+        renderTasksList();
+      }
+    });
+
+    // Evento de deleção
+    const delBtn = item.querySelector('.task-delete-btn');
+    delBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (confirm(`Deseja excluir a tarefa "${task.title}"?`)) {
+        activeProcess.tasks = activeProcess.tasks.filter(t => t.id !== task.id);
+        await ProcessService.update(activeProcess);
+        renderCalendarWidget();
+        renderTasksList();
+      }
+    });
+
+    container.appendChild(item);
+  });
+}
+
+// Cria uma tarefa manual sob demanda
+async function handleAddManualTask() {
+  if (!activeProcess) return;
+
+  const title = prompt('Digite o título da tarefa/prazo:');
+  if (!title || title.trim() === '') return;
+
+  const dateInput = prompt('Digite a data limite (formato DD/MM/AAAA):', new Date().toLocaleDateString('pt-BR'));
+  if (!dateInput) return;
+
+  // Valida e formata a data para YYYY-MM-DD
+  const parts = dateInput.split('/');
+  let dateFormatted = null;
+  if (parts.length === 3) {
+    const day = parts[0].padStart(2, '0');
+    const month = parts[1].padStart(2, '0');
+    const year = parts[2];
+    if (year.length === 4 && !isNaN(day) && !isNaN(month) && !isNaN(year)) {
+      dateFormatted = `${year}-${month}-${day}`;
+    }
+  }
+
+  if (!dateFormatted) {
+    alert('Formato de data inválido! Use o formato DD/MM/AAAA (ex: 20/07/2026).');
+    return;
+  }
+
+  const desc = prompt('Digite uma descrição breve da tarefa (opcional):') || '';
+
+  const newTask = {
+    id: `task-${Date.now()}-${Math.round(Math.random() * 1000)}`,
+    title: title.trim(),
+    date: dateFormatted,
+    description: desc.trim(),
+    cpcArticle: 'Manual',
+    completed: false,
+    source: 'manual'
+  };
+
+  if (!activeProcess.tasks) activeProcess.tasks = [];
+  activeProcess.tasks.push(newTask);
+
+  await ProcessService.update(activeProcess);
+  showToast('Nova tarefa adicionada com sucesso!');
+  
+  // Atualiza a visualização
+  renderCalendarWidget();
+  renderTasksList();
+}
+
+// Realiza a busca e importação em lote de processos por nome
+async function handleBatchImport() {
+  const courtAlias = document.getElementById('settings-import-court').value;
+  const nameInput = document.getElementById('settings-import-name').value.trim();
+  const poloFilter = document.getElementById('settings-import-polo').value;
+
+  if (!nameInput) {
+    showToast('Por favor, informe o nome exato para buscar.');
+    return;
+  }
+
+  const statusBox = document.getElementById('batch-import-status-box');
+  const statusText = document.getElementById('batch-import-status-text');
+  const detailsText = document.getElementById('batch-import-details');
+  const spinner = document.getElementById('batch-import-spinner');
+  const btnStart = document.getElementById('btn-start-batch-import');
+
+  statusBox.style.display = 'block';
+  statusText.textContent = 'Buscando processos no Datajud...';
+  detailsText.textContent = `Consultando base do tribunal ${courtAlias.toUpperCase()} pelo nome "${nameInput}"`;
+  spinner.className = 'material-symbols-rounded spinning';
+  btnStart.disabled = true;
+
+  try {
+    // Elasticsearch query para buscar correspondência do nome da parte
+    const query = {
+      "size": 50,
+      "query": {
+        "match": {
+          "partes.nome": nameInput
+        }
+      }
+    };
+
+    const response = await authFetch('/api/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': customApiKey
+      },
+      body: JSON.stringify({
+        tribunal: courtAlias,
+        query: query,
+        timeout: 20000 // Aumenta o tempo limite para pesquisas complexas
+      })
+    });
+
+    if (!response.ok) {
+      let errMsg = 'Falha ao pesquisar no Datajud.';
+      try {
+        const errJSON = await response.json();
+        errMsg = errJSON.error || errMsg;
+      } catch (ex) {}
+      throw new Error(errMsg);
+    }
+
+    const data = await response.json();
+    const hits = data.hits?.hits || [];
+
+    if (hits.length === 0) {
+      statusText.textContent = 'Busca finalizada.';
+      detailsText.textContent = 'Nenhum processo com esse nome foi localizado na base deste tribunal.';
+      spinner.className = 'material-symbols-rounded';
+      btnStart.disabled = false;
+      return;
+    }
+
+    // Mapeia os hits para o formato interno do Monitor
+    const mapped = hits.map(hit => {
+      const src = hit._source;
+      return {
+        id: hit._id || `${src.tribunal}_${src.numeroProcesso}`,
+        numeroProcesso: src.numeroProcesso,
+        tribunal: src.tribunal || courtAlias.toUpperCase(),
+        grau: src.grau || 'G1',
+        classe: src.classe || { nome: 'Não classificado' },
+        assuntos: src.assuntos || [],
+        orgaoJulgador: src.orgaoJulgador || { nome: 'Não informado' },
+        dataAjuizamento: src.dataAjuizamento,
+        dataHoraUltimaAtualizacao: src.dataHoraUltimaAtualizacao,
+        formato: src.formato || { nome: 'Eletrônico' },
+        partes: (src.partes || []).map(p => ({
+          nome: p.pessoa ? p.pessoa.nome : (p.nome || 'Parte'),
+          polo: p.polo || 'ATIVO',
+          tipo: p.pessoa ? p.pessoa.tipo : 'Física',
+          numeroDocumentoPrincipal: p.pessoa ? p.pessoa.numeroDocumentoPrincipal : null
+        })),
+        movimentos: (src.movimentos || []).map(m => ({
+          nome: m.nome,
+          dataHora: m.dataHora,
+          detalhes: m.complementosTabelados ? m.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join(', ') : ''
+        }))
+      };
+    });
+
+    // Filtra pelo nome exato ou contido (case-insensitive) e pelo polo especificado
+    // A API do Datajud às vezes retorna abreviações ou qualificações (ex: "KLEBER CRISTIANO MAGRINI - PERITO")
+    const searchNameClean = nameInput.toLowerCase().trim();
+    const filtered = mapped.filter(proc => {
+      return proc.partes?.some(part => {
+        const partNameClean = part.nome.toLowerCase().trim();
+        // Permite match exato ou contido (ex: nome buscado está contido no nome da parte da API ou vice-versa)
+        const isNameMatch = partNameClean.includes(searchNameClean) || searchNameClean.includes(partNameClean);
+        if (poloFilter === 'todos') {
+          return isNameMatch;
+        } else {
+          return isNameMatch && part.polo === poloFilter;
+        }
+      });
+    });
+
+    if (filtered.length === 0) {
+      statusText.textContent = 'Busca finalizada.';
+      detailsText.textContent = `Foram encontrados ${mapped.length} registros no Datajud, mas nenhum atendeu aos critérios de filtragem de nome/polo das partes mapeadas.`;
+      spinner.className = 'material-symbols-rounded';
+      btnStart.disabled = false;
+      return;
+    }
+
+    statusText.textContent = `Importando ${filtered.length} processos...`;
+    let addedCount = 0;
+
+    for (let i = 0; i < filtered.length; i++) {
+      const proc = filtered[i];
+      detailsText.textContent = `Gravando processo ${i+1}/${filtered.length}: ${formatProcessNumber(proc.numeroProcesso)}`;
+      
+      // Cria a ficha do expert inicial
+      proc.expertInfo = getInitialExpertInfo(proc);
+      
+      const added = await ProcessService.add(proc);
+      if (added) {
+        addedCount++;
+      }
+    }
+
+    await renderDashboard();
+    statusText.textContent = 'Importação concluída!';
+    detailsText.textContent = `Sucesso! Foram importados/atualizados ${addedCount} novos processos para monitoramento.`;
+    spinner.className = 'material-symbols-rounded';
+    btnStart.disabled = false;
+    showToast(`${addedCount} novos processos importados com sucesso!`);
+  } catch (error) {
+    console.error(error);
+    statusText.textContent = 'Erro na importação.';
+    detailsText.textContent = error.message || 'Erro inesperado ao consultar o Datajud.';
+    spinner.className = 'material-symbols-rounded';
+    btnStart.disabled = false;
+  }
+}
+
+/* ==========================================================================
+   FUNÇÕES FINANCEIRAS (HONORÁRIOS E CORREÇÃO MONETÁRIA)
+   ========================================================================== */
+
+function formatCurrency(value) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+}
+
+function calculateUpdatedFees(value, baseDateStr, court) {
+  if (!value || isNaN(parseFloat(value))) return '-';
+  const val = parseFloat(value);
+  if (!baseDateStr) return formatCurrency(val) + ' (Sem data base)';
+  
+  const baseDate = new Date(baseDateStr);
+  if (isNaN(baseDate.getTime())) return formatCurrency(val) + ' (Data inválida)';
+  
+  const today = new Date();
+  if (baseDate > today) return formatCurrency(val);
+  
+  const diffYears = today.getFullYear() - baseDate.getFullYear();
+  const diffMonths = (diffYears * 12) + (today.getMonth() - baseDate.getMonth());
+  
+  // 1. Correção Monetária: TJSP usa Tabela Prática (IPCA-E/INPC), média histórica aprox. de 0.38% a.m.
+  const inflationRate = 0.0038;
+  const correctedVal = val * Math.pow(1 + inflationRate, Math.max(0, diffMonths));
+  
+  // 2. Juros de Mora: regra geral simples de 1% ao mês (Art. 406 do CC / CPC)
+  const interestRate = 0.01 * Math.max(0, diffMonths);
+  const interestVal = val * interestRate;
+  
+  const totalUpdated = correctedVal + interestVal;
+  
+  return formatCurrency(totalUpdated) + ` (Juros: +${Math.round(interestRate*100)}% | Corr: +${Math.round((Math.pow(1+inflationRate, diffMonths)-1)*100)}%)`;
+}
+
+// Renderiza o Painel Financeiro do Dashboard
+async function renderFinanceDashboard() {
+  const processes = await ProcessService.getProcesses();
+  const activeProcesses = processes.filter(p => !p.archived);
+  
+  const rowsContainer = document.getElementById('finance-table-rows');
+  const txtNominal = document.getElementById('finance-total-nominal');
+  const txtUpdated = document.getElementById('finance-total-updated');
+  const txtDeposited = document.getElementById('finance-total-deposited');
+  
+  rowsContainer.innerHTML = '';
+  
+  let totalNominal = 0;
+  let totalUpdated = 0;
+  let totalDeposited = 0;
+  
+  if (activeProcesses.length === 0) {
+    rowsContainer.innerHTML = `
+      <tr>
+        <td colspan="6" style="text-align: center; padding: 32px; color: var(--md-sys-color-on-surface-variant);">
+          Nenhum processo monitorado ativo para extrair informações financeiras.
+        </td>
+      </tr>
+    `;
+    txtNominal.textContent = formatCurrency(0);
+    txtUpdated.textContent = formatCurrency(0);
+    txtDeposited.textContent = formatCurrency(0);
+    return;
+  }
+  
+  activeProcesses.forEach(proc => {
+    const info = proc.expertInfo || {};
+    const hasFees = info.honorarios && !isNaN(parseFloat(info.honorarios));
+    const valBase = hasFees ? parseFloat(info.honorarios) : 0;
+    
+    // Calcula valores corrigidos
+    let valUpdated = 0;
+    if (valBase > 0) {
+      const baseDate = info.dataHonorarios ? new Date(info.dataHonorarios) : null;
+      if (baseDate && !isNaN(baseDate.getTime())) {
+        const today = new Date();
+        const diffYears = today.getFullYear() - baseDate.getFullYear();
+        const diffMonths = (diffYears * 12) + (today.getMonth() - baseDate.getMonth());
+        const inflationRate = 0.0038;
+        const corrected = valBase * Math.pow(1 + inflationRate, Math.max(0, diffMonths));
+        const interest = valBase * (0.01 * Math.max(0, diffMonths));
+        valUpdated = corrected + interest;
+      } else {
+        valUpdated = valBase;
+      }
+    }
+    
+    totalNominal += valBase;
+    totalUpdated += valUpdated;
+    
+    const depositStatus = info.depositoJudicial || 'Não informado';
+    if (depositStatus === 'Sim') {
+      totalDeposited += valUpdated;
+    } else if (depositStatus === 'Parcial') {
+      totalDeposited += (valUpdated * 0.5); // 50% estimado
+    }
+    
+    // Badge de status de depósito
+    let badgeClass = 'no';
+    let badgeLabel = 'Pendente';
+    if (depositStatus === 'Sim') {
+      badgeClass = 'yes';
+      badgeLabel = 'Pago (Depositado)';
+    } else if (depositStatus === 'Parcial') {
+      badgeClass = 'partial';
+      badgeLabel = 'Depósito Parcial';
+    } else if (depositStatus === 'Não informado' || depositStatus === 'Não') {
+      badgeClass = 'no';
+      badgeLabel = 'Não Depositado';
+    }
+    
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td style="padding: 16px;">
+        <span style="font-weight: 600; color: var(--md-sys-color-primary);">${formatProcessNumber(proc.numeroProcesso)}</span>
+        <div style="font-size: 11px; color: var(--md-sys-color-on-surface-variant); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          ${info.objetoPericia || 'Objeto não informado'}
+        </div>
+      </td>
+      <td style="padding: 16px; font-weight: 500;">${proc.tribunal.toUpperCase()}</td>
+      <td style="padding: 16px;">${valBase > 0 ? formatCurrency(valBase) : '<span style="color: var(--md-sys-color-outline);">Não informado</span>'}</td>
+      <td style="padding: 16px; font-weight: 600;">${valBase > 0 ? formatCurrency(valUpdated) : '<span style="color: var(--md-sys-color-outline);">-</span>'}</td>
+      <td style="padding: 16px;">
+        <span class="badge-deposit ${badgeClass}">${badgeLabel}</span>
+      </td>
+      <td style="padding: 16px; text-align: right;">
+        <button class="md-btn md-btn-compact md-btn-text" onclick="openProcessFromFinance('${proc.numeroProcesso}')">
+          Ver Ação
+        </button>
+      </td>
+    `;
+    rowsContainer.appendChild(row);
+  });
+  
+  txtNominal.textContent = formatCurrency(totalNominal);
+  txtUpdated.textContent = formatCurrency(totalUpdated);
+  txtDeposited.textContent = formatCurrency(totalDeposited);
+}
+
+// Helper global para abrir o detalhe a partir do painel financeiro
+window.openProcessFromFinance = async function(processNumber) {
+  const list = await ProcessService.getProcesses();
+  const proc = list.find(p => p.numeroProcesso === processNumber);
+  if (proc) {
+    openProcessDetails(proc);
+  }
+};
+
+/* ==========================================================================
+   ÁREA DE TAREFAS GLOBAL (DASHBOARD)
+   ========================================================================== */
+
+let currentGlobalTaskFilter = 'all';
+
+window.filterGlobalTasks = function(filterType) {
+  currentGlobalTaskFilter = filterType;
+  
+  document.querySelectorAll('.tasks-filters .md-btn-compact').forEach(btn => {
+    btn.classList.remove('active');
+  });
+  
+  const activeBtnMap = {
+    'all': 'btn-filter-tasks-all',
+    'pending': 'btn-filter-tasks-pending',
+    'overdue': 'btn-filter-tasks-overdue',
+    'completed': 'btn-filter-tasks-completed'
+  };
+  
+  const activeBtn = document.getElementById(activeBtnMap[filterType]);
+  if (activeBtn) activeBtn.classList.add('active');
+  
+  renderTasksDashboard();
+};
+
+function calculateOverdueTasksCount(processesList) {
+  let count = 0;
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  
+  processesList.forEach(proc => {
+    if (proc.tasks && Array.isArray(proc.tasks)) {
+      proc.tasks.forEach(t => {
+        if (!t.completed && t.date) {
+          const dueDate = new Date(t.date);
+          if (!isNaN(dueDate.getTime()) && dueDate < today) {
+            count++;
+          }
+        }
+      });
+    }
+  });
+  return count;
+}
+
+async function renderTasksDashboard() {
+  const container = document.getElementById('tasks-dashboard-container');
+  if (!container) return;
+  
+  container.innerHTML = '';
+  
+  const processes = await ProcessService.getProcesses();
+  const activeProcesses = processes.filter(p => !p.archived);
+  
+  // Coleta todas as tarefas de processos ativos
+  let allTasks = [];
+  activeProcesses.forEach(proc => {
+    if (proc.tasks && Array.isArray(proc.tasks)) {
+      proc.tasks.forEach(t => {
+        allTasks.push({
+          ...t,
+          processNo: proc.numeroProcesso,
+          processObject: proc.expertInfo?.objetoPericia || 'Objeto não informado'
+        });
+      });
+    }
+  });
+  
+  // Ordena tarefas por data de vencimento (vencidas/mais próximas primeiro)
+  allTasks.sort((a, b) => new Date(a.date) - new Date(b.date));
+  
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  
+  // Filtro
+  let filteredTasks = allTasks;
+  if (currentGlobalTaskFilter === 'pending') {
+    filteredTasks = allTasks.filter(t => !t.completed);
+  } else if (currentGlobalTaskFilter === 'overdue') {
+    filteredTasks = allTasks.filter(t => !t.completed && new Date(t.date) < today);
+  } else if (currentGlobalTaskFilter === 'completed') {
+    filteredTasks = allTasks.filter(t => t.completed);
+  }
+  
+  if (filteredTasks.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 32px; color: var(--md-sys-color-on-surface-variant); background: var(--md-sys-color-surface-container); border-radius: 12px; border: 1px dashed var(--md-sys-color-outline-variant);">
+        Nenhuma tarefa encontrada neste filtro.
+      </div>
+    `;
+    return;
+  }
+  
+  filteredTasks.forEach(task => {
+    const dueDate = new Date(task.date);
+    const isOverdue = !task.completed && dueDate < today;
+    const formattedDate = dueDate.toLocaleDateString('pt-BR');
+    
+    const taskCard = document.createElement('div');
+    taskCard.style.display = 'flex';
+    taskCard.style.alignItems = 'center';
+    taskCard.style.justifyContent = 'space-between';
+    taskCard.style.padding = '14px 16px';
+    taskCard.style.borderRadius = '12px';
+    taskCard.style.background = 'var(--md-sys-color-surface-container)';
+    taskCard.style.border = isOverdue ? '1px solid var(--md-sys-color-error)' : '1px solid var(--md-sys-color-outline-variant)';
+    if (task.completed) {
+      taskCard.style.opacity = '0.7';
+    }
+    
+    const checkboxId = `global-chk-${task.id}`;
+    
+    taskCard.innerHTML = `
+      <div style="display: flex; align-items: flex-start; gap: 12px; flex: 1;">
+        <input type="checkbox" id="${checkboxId}" ${task.completed ? 'checked' : ''} style="margin-top: 4px; accent-color: var(--md-sys-color-primary); cursor: pointer; width: 18px; height: 18px;">
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <span style="font-weight: 600; font-size: 14px; text-decoration: ${task.completed ? 'line-through' : 'none'}; color: ${isOverdue ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-on-surface)'};">
+            ${task.title}
+          </span>
+          <span style="font-size: 11px; color: var(--md-sys-color-on-surface-variant);">
+            <strong>Processo:</strong> ${formatProcessNumber(task.processNo)} - ${task.processObject}
+          </span>
+          ${task.description ? `<span style="font-size: 12px; color: var(--md-sys-color-on-surface-variant); font-style: italic;">${task.description}</span>` : ''}
+        </div>
+      </div>
+      
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="display: flex; flex-direction: column; align-items: flex-end;">
+          <span style="font-size: 12px; font-weight: 600; color: ${isOverdue ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-primary)'};">
+            Vence em: ${formattedDate}
+          </span>
+          ${isOverdue ? '<span style="font-size: 10px; font-weight: 700; color: var(--md-sys-color-error); text-transform: uppercase;">Atrasada ⚠️</span>' : ''}
+          ${task.completed ? '<span style="font-size: 10px; font-weight: 700; color: var(--md-sys-color-success); text-transform: uppercase;">Concluída</span>' : ''}
+        </div>
+      </div>
+    `;
+    
+    // Checkbox toggling handler
+    taskCard.querySelector(`#${checkboxId}`).addEventListener('change', async (e) => {
+      const checked = e.target.checked;
+      
+      const procList = await ProcessService.getProcesses();
+      const parentProc = procList.find(p => p.numeroProcesso === task.processNo);
+      if (parentProc && parentProc.tasks) {
+        const tObj = parentProc.tasks.find(t => t.id === task.id);
+        if (tObj) {
+          tObj.completed = checked;
+          await ProcessService.update(parentProc);
+          showToast(checked ? "Tarefa concluída!" : "Tarefa reaberta!");
+          await renderDashboard(); // Recalcula totais/badges
+          await renderTasksDashboard(); // Recarrega tela
+        }
+      }
+    });
+    
+    container.appendChild(taskCard);
+  });
+}
+
+/* ==========================================================================
+   LISTA DE PROCESSO ARQUIVADOS NAS CONFIGURAÇÕES
+   ========================================================================== */
+
+async function renderSettingsArchivedList() {
+  const container = document.getElementById('settings-archived-list');
+  if (!container) return;
+  
+  container.innerHTML = '';
+  
+  const processes = await ProcessService.getProcesses();
+  const archivedProcesses = processes.filter(p => p.archived);
+  
+  if (archivedProcesses.length === 0) {
+    container.innerHTML = `
+      <div style="text-align: center; padding: 24px; color: var(--md-sys-color-on-surface-variant); font-size: 13px;">
+        Nenhum processo arquivado encontrado.
+      </div>
+    `;
+    return;
+  }
+  
+  archivedProcesses.forEach(proc => {
+    const item = document.createElement('div');
+    item.style.display = 'flex';
+    item.style.alignItems = 'center';
+    item.style.justifyContent = 'space-between';
+    item.style.padding = '10px 12px';
+    item.style.borderRadius = '8px';
+    item.style.background = 'var(--md-sys-color-surface-container)';
+    item.style.border = '1px solid var(--md-sys-color-outline-variant)';
+    
+    item.innerHTML = `
+      <div style="display: flex; flex-direction: column; gap: 2px;">
+        <span style="font-weight: 600; font-size: 13px; color: var(--md-sys-color-primary);">
+          ${formatProcessNumber(proc.numeroProcesso)}
+        </span>
+        <span style="font-size: 11px; color: var(--md-sys-color-on-surface-variant); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          ${proc.expertInfo?.objetoPericia || 'Objeto não informado'}
+        </span>
+      </div>
+      <button class="md-btn md-btn-compact md-btn-tonal" style="padding: 4px 8px; font-size: 11px; gap: 4px;">
+        <span class="material-symbols-rounded" style="font-size: 14px;">unarchive</span>
+        <span>Desarquivar</span>
+      </button>
+    `;
+    
+    item.querySelector('button').addEventListener('click', async () => {
+      proc.archived = false;
+      await ProcessService.update(proc);
+      showToast(`Processo ${formatProcessNumber(proc.numeroProcesso)} desarquivado!`);
+      await renderDashboard();
+      await renderSettingsArchivedList();
+    });
+    
+    container.appendChild(item);
+  });
+}
+
+/* ==========================================================================
+   RADAR DE NOMEAÇÕES (DIÁRIOS OFICIAIS)
+   ========================================================================== */
+
+async function performRadarScan() {
+  if (!jwtToken) return;
+
+  const btn = document.getElementById('btn-radar-scan');
+  const icon = document.getElementById('radar-scan-icon');
+  const text = document.getElementById('radar-scan-text');
+  const statusBox = document.getElementById('radar-scan-status');
+  const statusText = document.getElementById('radar-scan-status-text');
+  const detailsText = document.getElementById('radar-scan-details');
+  const spinner = document.getElementById('radar-scan-spinner');
+
+  btn.disabled = true;
+  icon.textContent = 'sync';
+  icon.className = 'material-symbols-rounded spinning';
+  text.textContent = 'Vasculhando...';
+  statusBox.style.display = 'flex';
+  statusText.textContent = 'Vasculhando tribunais no Datajud em busca de nomeações...';
+  detailsText.textContent = 'Consultando base oficial do CNJ...';
+  spinner.className = 'material-symbols-rounded spinning';
+
+  try {
+    const response = await fetch('/api/radar/scan', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${jwtToken}`,
+        'Content-Type': 'application/json',
+        'x-api-key': customApiKey
+      }
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || 'Falha ao escanear tribunais.');
+    }
+
+    const result = await response.json();
+
+    statusText.textContent = `Busca concluída! ${result.found} nomeação(ns) encontrada(s) em ${result.tribunalsWithResults.length} tribunal(is).`;
+    detailsText.textContent = `${result.tribunalsScanned} tribunais vasculhados.`;
+
+    localStorage.setItem('radarLastScan', new Date().toISOString());
+    document.getElementById('radar-last-scan-label').textContent = `Última varredura: ${new Date().toLocaleString('pt-BR')}`;
+
+    await updateRadarBadgeCount();
+    await renderRadarDashboard();
+  } catch (err) {
+    statusText.textContent = 'Erro na varredura.';
+    detailsText.textContent = err.message;
+    showToast('Erro ao buscar nomeações: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    icon.textContent = 'radar';
+    icon.className = 'material-symbols-rounded';
+    text.textContent = 'Buscar Nomeações';
+    setTimeout(() => { statusBox.style.display = 'none'; }, 8000);
+  }
+}
+
+async function updateRadarBadgeCount() {
+  if (!jwtToken) return;
+  try {
+    const response = await fetch('/api/radar/notifications', {
+      headers: {
+        'Authorization': `Bearer ${jwtToken}`
+      }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      const badge = document.getElementById('badge-radar-count');
+      if (badge) {
+        if (data.length > 0) {
+          badge.textContent = data.length;
+          badge.style.display = 'inline-flex';
+          badge.style.alignItems = 'center';
+          badge.style.justifyContent = 'center';
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Erro ao atualizar contador do radar:", err);
+  }
+}
+
+async function renderRadarDashboard() {
+  const container = document.getElementById('radar-notifications-list');
+  if (!container) return;
+  
+  container.innerHTML = '';
+  
+  try {
+    const response = await fetch('/api/radar/notifications', {
+      headers: {
+        'Authorization': `Bearer ${jwtToken}`
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error("Erro ao buscar publicações do radar.");
+    }
+    
+    const list = await response.json();
+    
+    if (list.length === 0) {
+      container.innerHTML = `
+        <div style="text-align: center; padding: 48px; background: var(--md-sys-color-surface-container); border: 1px dashed var(--md-sys-color-outline-variant); border-radius: 16px; color: var(--md-sys-color-on-surface-variant);">
+          <span class="material-symbols-rounded" style="font-size: 48px; margin-bottom: 8px;">radar</span>
+          <h3>Tudo limpo por aqui!</h3>
+          <p style="font-size: 13px;">O radar não encontrou nenhuma nova publicação de nomeação para seus dados nas últimas 24 horas.</p>
+        </div>
+      `;
+      return;
+    }
+    
+    list.forEach(item => {
+      const card = document.createElement('div');
+      card.className = 'radar-card';
+      card.style.background = 'var(--md-sys-color-surface-container)';
+      card.style.border = '1px solid var(--md-sys-color-outline-variant)';
+      card.style.borderRadius = '16px';
+      card.style.padding = '20px';
+      card.style.display = 'flex';
+      card.style.flexDirection = 'column';
+      card.style.gap = '12px';
+      
+      card.innerHTML = `
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <span style="font-size: 10px; font-weight: 700; background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); padding: 4px 8px; border-radius: 6px; text-transform: uppercase;">
+              Nomeação Localizada
+            </span>
+            <h4 style="margin: 6px 0 2px 0; font-size: 16px; color: var(--md-sys-color-primary);">
+              Processo: ${formatProcessNumber(item.numeroProcesso)}
+            </h4>
+            <span style="font-size: 12px; color: var(--md-sys-color-on-surface-variant);">
+              <strong>Publicado em:</strong> ${new Date(item.dataPublicacao).toLocaleDateString('pt-BR')} | <strong>Diário:</strong> ${item.diario}
+            </span>
+            <div style="margin-top: 6px;">
+              <a href="${item.linkPublicacao}" target="_blank" style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--md-sys-color-primary); font-weight: 600; text-decoration: underline;">
+                <span class="material-symbols-rounded" style="font-size: 16px;">open_in_new</span>
+                <span>Visualizar Publicação Oficial (e-SAJ/Tribunal)</span>
+              </a>
+            </div>
+          </div>
+          <button class="md-btn md-btn-primary btn-import-radar" style="gap: 8px; background: var(--md-sys-color-tertiary); color: var(--md-sys-color-on-tertiary);">
+            <span class="material-symbols-rounded">cloud_download</span>
+            <span>Importar Nomeação</span>
+          </button>
+        </div>
+        
+        <div style="background: var(--md-sys-color-surface); padding: 12px; border-radius: 8px; border-left: 4px solid var(--md-sys-color-tertiary); font-size: 13px; line-height: 1.5; color: var(--md-sys-color-on-surface); font-style: italic;">
+          "${item.trecho}"
+        </div>
+        
+        <div style="display: flex; gap: 16px; font-size: 12px; color: var(--md-sys-color-on-surface-variant); background: var(--md-sys-color-surface-container-high); padding: 8px 12px; border-radius: 8px;">
+          <span>💰 <strong>Honorários Sugeridos:</strong> ${formatCurrency(item.honorariosSugeridos)}</span>
+          <span>🔍 <strong>Objeto da Perícia:</strong> ${item.objetoSugerido}</span>
+        </div>
+      `;
+      
+      card.querySelector('.btn-import-radar').addEventListener('click', async () => {
+        if (!confirm(`Deseja importar a nomeação processual ${formatProcessNumber(item.numeroProcesso)} para sua lista de monitoramento?`)) {
+          return;
+        }
+        
+        try {
+          showToast("Consultando API do Datajud...");
+          const cleanCNJ = item.numeroProcesso.replace(/[^0-9]/g, '');
+          
+          let officialProcess;
+          try {
+            // Busca o processo oficial real na API do Datajud
+            officialProcess = await fetchProcessFromAPI(cleanCNJ, item.tribunal);
+            
+            // Inicializa a Ficha do Expert com os dados e comarca reais do Datajud
+            officialProcess.expertInfo = getInitialExpertInfo(officialProcess);
+          } catch (apiErr) {
+            console.warn("Falha ao buscar no Datajud, importando provisoriamente com dados do Diário Oficial:", apiErr);
+            
+            // Cria um processo provisório contendo os dados do Diário Oficial para não travar o usuário
+            officialProcess = {
+              id: `${currentUserEmail}_${item.numeroProcesso}`,
+              userEmail: currentUserEmail,
+              numeroProcesso: item.numeroProcesso,
+              tribunal: item.tribunal,
+              classe: { nome: 'Procedimento Comum Cível' },
+              assuntos: [{ nome: 'Honorários Periciais / Nomeação' }],
+              orgaoJulgador: { nome: item.diario },
+              dataAjuizamento: new Date(Date.now() - 90*24*60*60*1000).toISOString(),
+              partes: [
+                { nome: 'Autor (Polo Ativo)', polo: 'ATIVO', tipo: 'Física', numeroDocumentoPrincipal: null },
+                { nome: 'Réu (Polo Passivo)', polo: 'PASSIVO', tipo: 'Jurídica', numeroDocumentoPrincipal: null }
+              ],
+              movimentos: [],
+              expertInfo: {
+                autor: 'Aguardando atualização do Datajud',
+                reu: 'Aguardando atualização do Datajud',
+                perito: currentUserEmail,
+                justicaGratuita: 'Não informado',
+                objetoPericia: item.objetoSugerido,
+                objetoPericiaEdit: item.objetoSugerido,
+                cidadeEstado: item.tribunal.toUpperCase() === 'TJSP' ? 'São Paulo/TJSP' : 'Justiça Federal',
+                inversaoOnus: 'não',
+                honorarios: item.honorariosSugeridos.toString(),
+                honorariosEdit: item.honorariosSugeridos.toString(),
+                depositoJudicial: 'Não',
+                dataHonorarios: item.dataPublicacao,
+                dataHonorariosEdit: item.dataPublicacao
+              },
+              archived: false,
+              lastChecked: new Date().toISOString(),
+              isProvisional: true // Marcador de importação provisória
+            };
+            
+            showToast("A API do Datajud está indisponível. Processo importado provisoriamente com os dados do Diário Oficial.", 7000);
+          }
+          
+          // Mescla com as informações extraídas do diário oficial (caso tenha vindo da API oficial)
+          if (!officialProcess.isProvisional) {
+            officialProcess.expertInfo.perito = currentUserEmail;
+            officialProcess.expertInfo.objetoPericia = item.objetoSugerido;
+            officialProcess.expertInfo.objetoPericiaEdit = item.objetoSugerido;
+            officialProcess.expertInfo.honorarios = item.honorariosSugeridos.toString();
+            officialProcess.expertInfo.honorariosEdit = item.honorariosSugeridos.toString();
+            officialProcess.expertInfo.dataHonorarios = item.dataPublicacao;
+            officialProcess.expertInfo.dataHonorariosEdit = item.dataPublicacao;
+          }
+          
+          // Injeta a movimentação de publicação do Diário Oficial nos andamentos
+          if (!officialProcess.movimentos) officialProcess.movimentos = [];
+          
+          const hasDjeMov = officialProcess.movimentos.some(m => m.nome === 'PUBLICAÇÃO DE NOMEAÇÃO (RADAR)');
+          if (!hasDjeMov) {
+            officialProcess.movimentos.unshift({
+              nome: 'PUBLICAÇÃO DE NOMEAÇÃO (RADAR)',
+              dataHora: new Date(item.dataPublicacao).toISOString(),
+              detalhes: item.trecho
+            });
+          }
+          
+          officialProcess.userEmail = currentUserEmail;
+          officialProcess.id = `${currentUserEmail}_${officialProcess.numeroProcesso}`;
+          officialProcess.archived = false;
+          
+          await ProcessService.add(officialProcess);
+          
+          const markResponse = await fetch('/api/radar/import', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${jwtToken}`
+            },
+            body: JSON.stringify({ id: item.id })
+          });
+          
+          if (!markResponse.ok) {
+            console.error("Erro ao registrar importação no radar backend.");
+          }
+          
+          showToast(`Processo ${formatProcessNumber(item.numeroProcesso)} importado com sucesso!`);
+          await updateRadarBadgeCount();
+          document.getElementById('btn-dash-tab-processes').click();
+          await renderDashboard();
+        } catch (err) {
+          showToast("Erro ao importar do radar: " + err.message);
+        }
+      });
+      
+      container.appendChild(card);
+    });
+  } catch (err) {
+    container.innerHTML = `
+      <div style="color: var(--md-sys-color-error); text-align: center; padding: 24px;">
+        Erro ao carregar o radar de nomeações: ${err.message}
+      </div>
+    `;
+  }
+}

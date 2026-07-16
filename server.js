@@ -1,0 +1,926 @@
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+// Carregar variáveis de ambiente de um arquivo .env se ele existir (zero dependências adicionais)
+if (fs.existsSync(path.join(__dirname, '.env'))) {
+  const envContent = fs.readFileSync(path.join(__dirname, '.env'), 'utf-8');
+  envContent.split(/\r?\n/).forEach(line => {
+    const parts = line.split('=');
+    if (parts.length > 1) {
+      const key = parts[0].trim();
+      const val = parts.slice(1).join('=').trim();
+      if (key && !key.startsWith('#')) {
+        process.env[key] = val.replace(/(^["']|["']$)/g, ''); // remove aspas se existirem
+      }
+    }
+  });
+}
+
+const JWT_SECRET = process.env.JWT_SECRET || 'secret-key-monitor-datajud-12345';
+const USERS_FILE = path.join(__dirname, 'data', 'users.json');
+
+// Garante que o diretório data exista
+if (!fs.existsSync(path.dirname(USERS_FILE))) {
+  fs.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
+}
+
+// Inicializa arquivo de usuários se não existir
+if (!fs.existsSync(USERS_FILE)) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify([]));
+}
+
+function loadUsers() {
+  try {
+    const data = fs.readFileSync(USERS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveUsers(users) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+}
+
+// Inicializa arquivo de radar se não existir
+const RADAR_FILE = path.join(__dirname, 'data', 'radar.json');
+if (!fs.existsSync(RADAR_FILE)) {
+  fs.writeFileSync(RADAR_FILE, JSON.stringify([]));
+}
+
+function loadRadar() {
+  try {
+    const data = fs.readFileSync(RADAR_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveRadar(data) {
+  fs.writeFileSync(RADAR_FILE, JSON.stringify(data, null, 2));
+}
+
+// Middleware para validar token JWT nas rotas protegidas
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (!token) {
+    return res.status(401).json({ error: 'Acesso negado. Faça login para continuar.' });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, payload) => {
+    if (err) {
+      return res.status(403).json({ error: 'Sua sessão expirou ou o token é inválido.' });
+    }
+    
+    const users = loadUsers();
+    const dbUser = users.find(u => u.email === payload.email);
+    if (!dbUser) {
+      return res.status(404).json({ error: 'Usuário não localizado.' });
+    }
+    
+    // Inibe acesso a recursos protegidos se a conta não estiver verificada
+    if (dbUser.verified === false && req.path !== '/api/auth/verify-email') {
+      return res.status(403).json({ error: 'CONTA_NAO_VERIFICADA', message: 'E-mail pendente de verificação.' });
+    }
+
+    req.user = dbUser;
+    next();
+  });
+}
+
+const app = express();
+// A Hostinger define a porta dinamicamente na variável de ambiente PORT
+const PORT = process.env.PORT || 3000;
+
+// Chave pública padrão do CNJ Datajud obtida da documentação oficial
+const DEFAULT_API_KEY = 'cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==';
+
+app.use(cors());
+app.use(express.json({ limit: '200mb' }));
+app.use(express.urlencoded({ limit: '200mb', extended: true }));
+
+// Servir arquivos estáticos do frontend
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Rota de Cadastro de Usuário
+app.post('/api/auth/register', async (req, res) => {
+  const { email, password, name, cpf } = req.body;
+
+  if (!email || !password || !name || !cpf) {
+    return res.status(400).json({ error: 'E-mail, senha, nome completo e CPF são obrigatórios.' });
+  }
+
+  const emailClean = email.trim().toLowerCase();
+  const users = loadUsers();
+
+  if (users.some(u => u.email === emailClean)) {
+    return res.status(400).json({ error: 'Este e-mail já está cadastrado.' });
+  }
+
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    users.push({
+      email: emailClean,
+      password: hashedPassword,
+      name: name.trim(),
+      cpf: cpf.trim().replace(/[^0-9]/g, ''),
+      verified: false,
+      verificationCode: verificationCode,
+      createdAt: new Date().toISOString()
+    });
+    
+    saveUsers(users);
+    console.log(`[Verificação de E-mail] Código gerado para ${emailClean}: ${verificationCode}`);
+    res.status(201).json({ 
+      message: 'Cadastro realizado com sucesso!',
+      _testVerificationCode: verificationCode // Helper para simular recebimento do e-mail no frontend
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha interna ao criar usuário.' });
+  }
+});
+
+// Rota de Login de Usuário
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'E-mail e senha são obrigatórios.' });
+  }
+
+  const emailClean = email.trim().toLowerCase();
+  const users = loadUsers();
+  const user = users.find(u => u.email === emailClean);
+
+  if (!user) {
+    return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
+  }
+
+  try {
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: 'Usuário ou senha incorretos.' });
+    }
+
+    const token = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ 
+      token, 
+      email: user.email, 
+      verified: user.verified !== false,
+      _testVerificationCode: user.verificationCode
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha interna ao realizar login.' });
+  }
+});
+
+// Rota para verificar a senha do usuário ativo (para confirmação de exclusão - PROTEGIDA)
+app.post('/api/auth/verify-password', authenticateToken, async (req, res) => {
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ error: 'O parâmetro "password" é obrigatório.' });
+  }
+
+  const users = loadUsers();
+  const user = users.find(u => u.email === req.user.email);
+
+  if (!user) {
+    return res.status(404).json({ error: 'Usuário não localizado.' });
+  }
+
+  try {
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    res.json({ valid: isPasswordValid });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha interna ao verificar senha.' });
+  }
+});
+
+// Rota para verificar o código de ativação do e-mail (PROTEGIDA)
+app.post('/api/auth/verify-email', authenticateToken, async (req, res) => {
+  const { code } = req.body;
+  if (!code) {
+    return res.status(400).json({ error: 'O código de verificação é obrigatório.' });
+  }
+  
+  const users = loadUsers();
+  const user = users.find(u => u.email === req.user.email);
+  if (!user) {
+    return res.status(404).json({ error: 'Usuário não localizado.' });
+  }
+  
+  if (user.verificationCode !== code.trim()) {
+    return res.status(400).json({ error: 'Código de verificação incorreto.' });
+  }
+  
+  user.verified = true;
+  saveUsers(users);
+  res.json({ message: 'E-mail verificado com sucesso!' });
+});
+
+// Rota para exclusão integral da conta e dados (PROTEGIDA)
+app.post('/api/auth/delete-account', authenticateToken, async (req, res) => {
+  const { password, email } = req.body;
+  if (!password || !email) {
+    return res.status(400).json({ error: 'Senha e e-mail de confirmação são obrigatórios.' });
+  }
+  
+  const emailClean = email.trim().toLowerCase();
+  if (emailClean !== req.user.email) {
+    return res.status(400).json({ error: 'O e-mail de confirmação não confere com o usuário logado.' });
+  }
+  
+  const users = loadUsers();
+  const userIndex = users.findIndex(u => u.email === req.user.email);
+  if (userIndex === -1) {
+    return res.status(404).json({ error: 'Usuário não localizado.' });
+  }
+  
+  const user = users[userIndex];
+  try {
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: 'Senha incorreta. A deleção foi cancelada.' });
+    }
+    
+    // Remove o usuário de users.json
+    users.splice(userIndex, 1);
+    saveUsers(users);
+    
+    console.log(`[Segurança] Conta excluída permanentemente: ${emailClean}`);
+    res.json({ message: 'Conta e dados excluídos permanentemente.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha interna ao excluir a conta.' });
+  }
+});
+
+// Rota para buscar as publicações no Radar de Nomeações (PROTEGIDA)
+app.get('/api/radar/notifications', authenticateToken, (req, res) => {
+  const users = loadUsers();
+  const user = users.find(u => u.email === req.user.email);
+  if (!user) {
+    return res.status(404).json({ error: 'Usuário não localizado.' });
+  }
+
+  let radarData = loadRadar();
+  
+  // Auto-limpeza: purga os registros antigos fictícios se existirem no banco local de radar
+  const initialLength = radarData.length;
+  radarData = radarData.filter(item => 
+    item.numeroProcesso !== '1011405-32.2025.8.26.0002' && 
+    item.numeroProcesso !== '5001243-85.2026.4.03.6100'
+  );
+  if (radarData.length !== initialLength) {
+    saveRadar(radarData);
+  }
+
+  let userRadar = radarData.filter(item => item.userEmail === user.email);
+
+  // Retorna apenas as não importadas
+  res.json(userRadar.filter(item => !item.imported));
+});
+
+// Rota para marcar publicação do radar como importada (PROTEGIDA)
+app.post('/api/radar/import', authenticateToken, (req, res) => {
+  const { id } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: 'O ID da nomeação é obrigatório.' });
+  }
+
+  const radarData = loadRadar();
+  const item = radarData.find(r => r.id === id && r.userEmail === req.user.email);
+  if (!item) {
+    return res.status(404).json({ error: 'Nomeação não localizada no radar.' });
+  }
+
+  item.imported = true;
+  saveRadar(radarData);
+  res.json({ message: 'Nomeação marcada como importada.' });
+});
+
+// Rota para varrer tribunais no Datajud em busca de nomeações reais do perito (PROTEGIDA)
+app.post('/api/radar/scan', authenticateToken, async (req, res) => {
+  const user = req.user;
+  // Tribunais mais relevantes para nomeação de peritos
+  const tribunals = ['tjsp', 'tjrj', 'tjmg', 'tjrs', 'tjpr', 'tjsc', 'tjba', 'tjpe', 'tjce', 'tjdft', 'trf1', 'trf3', 'trf4', 'trt2', 'trt15'];
+  const clientApiKey = req.headers['x-api-key'];
+  const apiKey = clientApiKey && clientApiKey.trim() !== '' ? clientApiKey : (process.env.DATAJUD_API_KEY || DEFAULT_API_KEY);
+
+  let radarData = loadRadar();
+  const existingIds = new Set(radarData.map(r => r.id));
+
+  async function scanTribunal(tribunal) {
+    const url = `https://api-publica.datajud.cnj.jus.br/api_publica_${tribunal}/_search`;
+    const query = {
+      size: 30,
+      query: {
+        bool: {
+          should: [
+            { match: { "partes.nome": user.name } }
+          ],
+          minimum_should_match: 1
+        }
+      }
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `APIKey ${apiKey}`
+        },
+        body: JSON.stringify(query),
+        signal: controller.signal
+      });
+
+      if (!response.ok) return { tribunal, hits: [] };
+
+      const data = await response.json();
+      return { tribunal, hits: data.hits?.hits || [] };
+    } catch {
+      return { tribunal, hits: [] };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  const results = [];
+  for (const tribunal of tribunals) {
+    results.push({ status: 'fulfilled', value: await scanTribunal(tribunal) });
+  }
+
+  let totalFound = 0;
+  const tribunalsWithResults = [];
+
+  for (const result of results) {
+    if (result.status !== 'fulfilled') continue;
+
+    const { tribunal, hits } = result.value;
+
+    if (hits.length === 0) continue;
+    tribunalsWithResults.push(tribunal.toUpperCase());
+
+    for (const hit of hits) {
+      const src = hit._source;
+      const movimentos = src.movimentos || [];
+
+      // Procura movimento que contenha "nomea" no nome (nomeação judicial)
+      const nomeacaoMov = movimentos.find(m =>
+        m.nome && (
+          m.nome.toLowerCase().includes('nomea') ||
+          m.nome.toLowerCase().includes('perito') ||
+          m.nome.toLowerCase().includes('honorário')
+        )
+      );
+
+      if (!nomeacaoMov) continue;
+
+      const itemId = `radar_${user.email.replace(/[^a-zA-Z0-9]/g, '_')}_${src.numeroProcesso.replace(/[^0-9]/g, '')}`;
+      if (existingIds.has(itemId)) continue;
+
+      const parts = (src.partes || []).map(p => ({
+        nome: p.pessoa ? p.pessoa.nome : (p.nome || ''),
+        polo: p.polo || ''
+      }));
+
+      const complementos = nomeacaoMov.complementosTabelados
+        ? nomeacaoMov.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join('; ')
+        : '';
+
+      const trecho = `${nomeacaoMov.nome}${complementos ? ' - ' + complementos : ''}`;
+
+      radarData.push({
+        id: itemId,
+        userEmail: user.email,
+        numeroProcesso: src.numeroProcesso,
+        tribunal: tribunal,
+        diario: `Diário da Justiça - ${tribunal.toUpperCase()}`,
+        dataPublicacao: nomeacaoMov.dataHora ? nomeacaoMov.dataHora.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        trecho: trecho,
+        honorariosSugeridos: null,
+        objetoSugerido: 'Nomeação Judicial',
+        linkPublicacao: `https://www.cnj.jus.br/processo/${src.numeroProcesso}`,
+        imported: false
+      });
+
+      existingIds.add(itemId);
+      totalFound++;
+    }
+  }
+
+  saveRadar(radarData);
+
+  const userItems = radarData.filter(r => r.userEmail === user.email && !r.imported);
+
+  res.json({
+    found: totalFound,
+    tribunalsScanned: tribunals.length,
+    tribunalsWithResults: tribunalsWithResults,
+    items: userItems,
+    lastScan: new Date().toISOString()
+  });
+});
+
+// Rota de proxy para consultas à API do Datajud (PROTEGIDA)
+app.post('/api/search', authenticateToken, async (req, res) => {
+  const { tribunal, query, timeout } = req.body;
+
+  if (!tribunal) {
+    return res.status(400).json({ error: 'O parâmetro "tribunal" é obrigatório.' });
+  }
+
+  if (!query) {
+    return res.status(400).json({ error: 'O parâmetro "query" (Elasticsearch Query DSL) é obrigatório.' });
+  }
+
+  // Verifica se o cliente enviou uma API Key personalizada no header
+  const clientApiKey = req.headers['x-api-key'];
+  const apiKey = clientApiKey && clientApiKey.trim() !== '' ? clientApiKey : (process.env.DATAJUD_API_KEY || DEFAULT_API_KEY);
+
+  const url = `https://api-publica.datajud.cnj.jus.br/api_publica_${tribunal.toLowerCase()}/_search`;
+
+  // Define timeout com base no parâmetro do cliente, padrão de 30 segundos
+  const requestTimeout = timeout ? parseInt(timeout) : 30000;
+
+  console.log(`[Proxy] Direcionando busca para o tribunal: ${tribunal.toUpperCase()} (Timeout: ${requestTimeout}ms)`);
+  console.log(`[Proxy] Chave utilizada: ${apiKey.substring(0, 8)}...`);
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), requestTimeout);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `APIKey ${apiKey}`
+      },
+      body: JSON.stringify(query),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error(`[Proxy] Erro da API CNJ (${response.status}):`, data);
+      return res.status(response.status).json({
+        error: 'Erro retornado pela API do Datajud.',
+        details: data
+      });
+    }
+
+    res.json(data);
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      console.warn(`[Proxy] Timeout de ${requestTimeout}ms atingido ao consultar CNJ para tribunal ${tribunal.toUpperCase()}`);
+      return res.status(408).json({
+        error: 'Tempo limite esgotado ao tentar se comunicar com o Datajud (API pública lenta).',
+        details: `O servidor do tribunal demorou mais do que o limite permitido (${requestTimeout / 1000}s) para responder.`
+      });
+    }
+    console.error('[Proxy] Erro de rede ou servidor ao consultar CNJ:', error);
+    res.status(500).json({
+      error: 'Falha interna ao tentar se comunicar com o Datajud.',
+      details: error.message
+    });
+  }
+});
+
+// Rota para extração de texto de arquivo PDF usando pdf-parse (stateless - PROTEGIDA)
+app.post('/api/parse-pdf', authenticateToken, async (req, res) => {
+  const { pdfBase64 } = req.body;
+
+  if (!pdfBase64) {
+    return res.status(400).json({ error: 'O parâmetro "pdfBase64" contendo o arquivo em base64 é obrigatório.' });
+  }
+
+  try {
+    const pdfBuffer = Buffer.from(pdfBase64, 'base64');
+    const { PDFParse } = require('pdf-parse');
+    
+    console.log(`[PDF Parser] Iniciando extração de texto de PDF (Tamanho do buffer: ${pdfBuffer.length} bytes)`);
+    
+    const parser = new PDFParse({ data: pdfBuffer });
+    const data = await parser.getText();
+    
+    const pdfText = data.text || '';
+    const numPages = data.total || 0;
+
+    // Tenta extrair a ficha técnica usando o Gemini em segundo plano se a chave for fornecida
+    let expertInfo = {
+      autor: 'Não localizado',
+      reu: 'Não localizado',
+      justicaGratuita: 'Não informado',
+      objetoPericia: 'Não localizado',
+      cidadeEstado: 'Não localizado'
+    };
+
+    const clientGeminiKey = req.headers['x-gemini-key'];
+    const geminiKey = clientGeminiKey && clientGeminiKey.trim() !== '' ? clientGeminiKey : process.env.GEMINI_API_KEY;
+
+    if (geminiKey && pdfText.trim() !== '') {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`;
+        
+        // Pega os primeiros 15000 caracteres para analisar a petição inicial/capa
+        const sampleText = pdfText.substring(0, 15000);
+        
+        const prompt = `
+Analise o seguinte trecho inicial de um processo judicial brasileiro e extraia as seguintes informações em formato JSON estruturado:
+1. "autor": Nome completo do Autor (Polo Ativo).
+2. "reu": Nome completo do Réu (Polo Passivo).
+3. "justicaGratuita": "Sim" se houver menção clara de concessão de justiça gratuita / benefício da gratuidade de justiça / benefício da JG. Caso contrário, "Não". Se não houver menção, "Não informado".
+4. "objetoPericia": Resumo sumário (máximo de 15 palavras) do objeto técnico da perícia ou disputa técnica (ex: "Apurar suposto erro em cirurgia bariátrica", "Recálculo de verbas rescisórias trabalhistas", "Avaliação de benfeitorias em imóvel").
+5. "cidadeEstado": Cidade e Estado da comarca/foro deste processo (ex: "Ribeirão Preto/SP").
+
+Retorne APENAS o JSON puro, sem blocos de código markdown ou explicações. Exemplo de retorno:
+{"autor": "...", "reu": "...", "justicaGratuita": "...", "objetoPericia": "...", "cidadeEstado": "..."}
+
+Texto do processo:
+${sampleText}
+`;
+        
+        console.log(`[PDF Parser] Solicitando extração de Ficha Técnica ao Gemini...`);
+        const aiRes = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: prompt
+              }]
+            }]
+          })
+        });
+
+        if (aiRes.ok) {
+          const aiData = await aiRes.json();
+          const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+          
+          // Limpa blocos de código se houver (ex: ```json ... ```)
+          const cleanJSONStr = aiText.replace(/^```json/, '').replace(/```$/, '').trim();
+          const parsed = JSON.parse(cleanJSONStr);
+          
+          expertInfo = {
+            autor: parsed.autor || expertInfo.autor,
+            reu: parsed.reu || expertInfo.reu,
+            justicaGratuita: parsed.justicaGratuita || expertInfo.justicaGratuita,
+            objetoPericia: parsed.objetoPericia || expertInfo.objetoPericia,
+            cidadeEstado: parsed.cidadeEstado || expertInfo.cidadeEstado
+          };
+          console.log(`[PDF Parser] Ficha técnica extraída com sucesso para o Expert:`, expertInfo);
+        } else {
+          console.warn(`[PDF Parser] API do Gemini retornou status ${aiRes.status} na extração de metadados.`);
+        }
+      } catch (ex) {
+        console.error('[PDF Parser] Falha ao extrair expertInfo via Gemini:', ex);
+      }
+    }
+    
+    res.json({
+      text: pdfText,
+      numPages: numPages,
+      expertInfo: expertInfo
+    });
+  } catch (error) {
+    console.error('[PDF Parser] Falha ao extrair texto do PDF:', error);
+    res.status(500).json({
+      error: 'Erro ao processar e extrair o texto do arquivo PDF.',
+      details: error.message
+    });
+  }
+});
+
+// Helper comum para processar IA via API direta do Gemini, OpenRouter ou Groq
+async function generateAiContent(prompt, apiKey, modelType = 'analysis') {
+  if (apiKey.startsWith('gsk_')) {
+    // Provedor Groq Cloud (API compatível com OpenAI)
+    // Usa llama-3.1-8b-instant para tarefas leves de metadados para economizar a cota restrita de TPM do llama-3.3-70b-versatile
+    const model = modelType === 'metadata' ? 'llama-3.1-8b-instant' : 'llama-3.3-70b-versatile';
+    console.log(`[Groq] Chamando o modelo: ${model} (${modelType})`);
+    
+    let attempts = 0;
+    const maxAttempts = 3;
+    
+    while (attempts < maxAttempts) {
+      attempts++;
+      try {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [{ role: 'user', content: prompt }]
+          })
+        });
+        
+        const data = await response.json();
+        
+        // Se bater no limite de taxa, aguarda o tempo que a API pede e tenta de novo automaticamente
+        if (response.status === 429) {
+          const delaySec = data.error?.message?.match(/in (\d+\.\d+)s/)?.[1] || 7;
+          const waitMs = Math.ceil(parseFloat(delaySec) * 1000) + 500;
+          console.warn(`[Groq Rate Limit] Limite de tokens atingido. Aguardando ${waitMs}ms para tentar novamente (Tentativa ${attempts}/${maxAttempts})...`);
+          await new Promise(r => setTimeout(r, waitMs));
+          continue;
+        }
+        
+        if (!response.ok) {
+          console.error('[Groq] Erro na API do Groq:', data);
+          throw new Error(data.error?.message || 'Erro retornado pela API do Groq.');
+        }
+        
+        const text = data.choices?.[0]?.message?.content;
+        if (!text) {
+          throw new Error('A resposta do Groq não retornou nenhum texto válido.');
+        }
+        return text;
+      } catch (err) {
+        if (attempts >= maxAttempts) throw err;
+        console.warn(`[Groq Connection] Falha de conexão. Aguardando 2s para tentar novamente (Tentativa ${attempts}/${maxAttempts})...`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+    throw new Error('Falha ao processar a requisição no Groq após várias tentativas.');
+  } else if (apiKey.startsWith('sk-or-')) {
+    // Provedor OpenRouter
+    const modelsToTry = [
+      'google/gemini-2.0-flash',
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'openrouter/free'
+    ];
+    
+    let lastError = null;
+    for (const model of modelsToTry) {
+      try {
+        console.log(`[OpenRouter] Tentando chamar o modelo: ${model}`);
+        const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+            'HTTP-Referer': 'http://localhost:3000',
+            'X-Title': 'Datajud Monitor'
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [{ role: 'user', content: prompt }]
+          })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          const text = data.choices?.[0]?.message?.content;
+          if (text) {
+            console.log(`[OpenRouter] Sucesso com o modelo: ${model}`);
+            return text;
+          }
+        } else {
+          const errText = await response.text();
+          console.warn(`[OpenRouter] Falha no modelo ${model}: ${response.status} - ${errText}`);
+          lastError = new Error(errText);
+        }
+      } catch (err) {
+        console.error(`[OpenRouter] Erro de conexão com ${model}:`, err);
+        lastError = err;
+      }
+    }
+    throw lastError || new Error('Falha ao processar a requisição no OpenRouter. Verifique o saldo ou cota.');
+  } else {
+    // Provedor Direto do Gemini (Google AI Studio)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: prompt
+          }]
+        }]
+      })
+    });
+    
+    const data = await response.json();
+    if (!response.ok) {
+      console.error('[Gemini Direct] Erro na requisição ao Gemini API:', data);
+      throw new Error(data.error?.message || 'Erro retornado pela API do Gemini.');
+    }
+    
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      throw new Error('A resposta do Gemini não retornou nenhum texto válido.');
+    }
+    return text;
+  }
+}
+
+// Rota para extração de metadados da Ficha Técnica do Expert usando IA (Payload pequeno - PROTEGIDA)
+app.post('/api/extract-pdf-metadata', authenticateToken, async (req, res) => {
+  const { textSample } = req.body;
+
+  if (!textSample) {
+    return res.status(400).json({ error: 'O parâmetro "textSample" contendo os primeiros caracteres é obrigatório.' });
+  }
+
+  // Verifica se o cliente enviou uma API Key personalizada no header
+  const clientGeminiKey = req.headers['x-gemini-key'];
+  const geminiKey = clientGeminiKey && clientGeminiKey.trim() !== '' ? clientGeminiKey : process.env.GEMINI_API_KEY;
+
+  let expertInfo = {
+    autor: 'Não localizado',
+    reu: 'Não localizado',
+    perito: 'Não nomeado',
+    justicaGratuita: 'Não informado',
+    objetoPericia: 'Não localizado',
+    cidadeEstado: 'Não localizado',
+    inversaoOnus: 'Não informado',
+    todasPartes: []
+  };
+
+  if (!geminiKey) {
+    return res.json({ expertInfo });
+  }
+
+  const prompt = `
+Analise o seguinte trecho inicial de um processo judicial brasileiro e extraia as seguintes informações em formato JSON estruturado:
+1. "autor": Nome completo do Autor (Polo Ativo).
+2. "reu": Nome completo do Réu (Polo Passivo).
+3. "perito": Nome completo do Perito Judicial nomeado, se houver menção à sua nomeação (ex: "Dr. João Silva"). Caso contrário, retornar "Não nomeado".
+4. "justicaGratuita": "Sim" se houver menção clara de concessão de justiça gratuita / benefício da gratuidade de justiça / benefício da JG. Caso contrário, "Não". Se não houver menção, "Não informado".
+5. "objetoPericia": Resumo sumário (máximo de 15 palavras) do objeto técnico da perícia ou disputa técnica (ex: "Apurar suposto erro em cirurgia bariátrica", "Recálculo de verbas rescisórias trabalhistas", "Avaliação de benfeitorias em imóvel").
+6. "cidadeEstado": Cidade e Estado da comarca/foro deste processo (ex: "Ribeirão Preto/SP").
+7. "inversaoOnus": "Sim" se houver pedido ou decisão explícita de inversão do ônus da prova. "Não" se expressamente indeferido/afastado. Se não houver menção, "Não informado".
+8. "todasPartes": Array de objetos com os integrantes do polo ativo e passivo que constam no texto, no formato [{"nome": "...", "polo": "ATIVO"}, {"nome": "...", "polo": "PASSIVO"}].
+
+Retorne APENAS o JSON puro, sem blocos de código markdown ou explicações. Exemplo de retorno:
+{"autor": "...", "reu": "...", "perito": "...", "justicaGratuita": "...", "objetoPericia": "...", "cidadeEstado": "...", "inversaoOnus": "...", "todasPartes": [{"nome": "...", "polo": "ATIVO"}]}
+
+Texto do processo:
+${textSample}
+`;
+
+  try {
+    console.log(`[Metadata Extractor] Solicitando extração leve de Ficha Técnica ao provedor de IA...`);
+    const aiText = await generateAiContent(prompt, geminiKey, 'metadata');
+    
+    if (aiText) {
+      const cleanJSONStr = aiText.trim().replace(/^```json/, '').replace(/```$/, '').trim();
+      const parsed = JSON.parse(cleanJSONStr);
+      
+      expertInfo = {
+        autor: parsed.autor || expertInfo.autor,
+        reu: parsed.reu || expertInfo.reu,
+        perito: parsed.perito || expertInfo.perito,
+        justicaGratuita: parsed.justicaGratuita || expertInfo.justicaGratuita,
+        objetoPericia: parsed.objetoPericia || expertInfo.objetoPericia,
+        cidadeEstado: parsed.cidadeEstado || expertInfo.cidadeEstado,
+        inversaoOnus: parsed.inversaoOnus || expertInfo.inversaoOnus,
+        todasPartes: parsed.todasPartes || []
+      };
+      console.log(`[Metadata Extractor] Ficha técnica extraída com sucesso para o Expert:`, expertInfo);
+    }
+    
+    res.json({ expertInfo });
+  } catch (error) {
+    console.error('[Metadata Extractor] Falha ao extrair metadados via IA:', error);
+    res.json({ expertInfo }); // Retorna dados padrão mesmo se falhar para não bloquear o upload
+  }
+});
+
+// Rota para análise de processos por IA (Focado em Perícia Judicial - CPC/2015 - PROTEGIDA)
+app.post('/api/analyze-process', authenticateToken, async (req, res) => {
+  const { processData } = req.body;
+
+  if (!processData || !processData.pdfText) {
+    return res.status(400).json({ error: 'Os dados do processo e o texto extraído do PDF ("pdfText") são obrigatórios para a análise.' });
+  }
+
+  // Verifica se o cliente enviou uma API Key personalizada no header
+  const clientGeminiKey = req.headers['x-gemini-key'];
+  const geminiKey = clientGeminiKey && clientGeminiKey.trim() !== '' ? clientGeminiKey : process.env.GEMINI_API_KEY;
+
+  if (!geminiKey) {
+    return res.status(401).json({
+      error: 'Chave de API não configurada.',
+      details: 'Configure a variável GEMINI_API_KEY no arquivo .env do servidor ou insira sua chave nas Configurações da aplicação.'
+    });
+  }
+
+  let pdfText = processData.pdfText;
+  const maxLength = 25000; // ~6k tokens, ideal para manter margem folgada dentro dos 12.000 TPM da Groq
+  if (pdfText && pdfText.length > maxLength) {
+    console.log(`[IA] Truncando texto do PDF de ${pdfText.length} para ${maxLength} caracteres para evitar limite de tokens por minuto (TPM) da API.`);
+    pdfText = pdfText.slice(0, maxLength) + '\n\n[... TEXTO DO PDF TRUNCADO PELO MONITOR PARA ATENDER OS LIMITES DE VOLUME DA IA ...]';
+  }
+
+  // Prompts estruturados focados em Peritos Judiciais e Assistentes Técnicos (CPC/2015)
+  const promptText = `
+Você é um consultor jurídico e assistente de IA de alta performance, especializado no Código de Processo Civil (CPC/2015) brasileiro.
+Seu foco principal é auxiliar Peritos Judiciais e Assistentes Técnicos (Auxiliares da Justiça / Experts) na análise de autos processuais.
+
+Sua tarefa é analisar o texto extraído da cópia integral de um processo em PDF e gerar as seguintes informações:
+1. Um parecer/relatório analítico detalhado em português (formato Markdown).
+2. O nome do perito nomeado e se houve ou não a inversão do ônus da prova.
+3. Informações financeiras da perícia: o valor de honorários arbitrados ou propostos, se o depósito judicial correspondente foi efetuado pelas partes responsáveis e a data de fixação/proposta dos honorários.
+4. Uma lista estruturada (JSON array) contendo os prazos processuais (deadlines) calculados.
+
+INSTRUÇÕES IMPORTANTES PARA O PARECER:
+- Baseie sua análise estritamente no texto do PDF fornecido. Jamais invente fatos, nomes ou dados fictícios.
+- Identifique os prazos críticos aplicáveis ao Perito do juízo ou Assistentes Técnicos das partes (Proposta de honorários, escusa, resposta a esclarecimentos, entrega de laudo, parecer técnico discordante/concordante).
+- O parecer deve ser em português claro e bem estruturado.
+
+INSTRUÇÕES IMPORTANTES PARA OS PRAZOS (DEADLINES):
+- Para cada prazo encontrado ou aplicável, determine uma data limite real (formato YYYY-MM-DD). Calcule a data limite com base nas datas de intimação ou publicação citadas no PDF (use apenas dias úteis para o cálculo, pulando finais de semana e feriados nacionais, seguindo o CPC/2015). Se a data da intimação ou publicação do prazo específico não constar no texto, estime a data limite com base no andamento mais recente dos autos ou use como referência o dia de hoje (${new Date().toLocaleDateString('pt-BR')}).
+
+Você deve responder APENAS com um objeto JSON válido, sem qualquer texto de introdução ou conclusão. O JSON deve ter exatamente a seguinte estrutura:
+{
+  "analysis": "### 📋 Resumo da Demanda (Objeto da Lide)...\\n\\n### ⚖️ Histórico de Atuação da Perícia...\\n\\n### ⚠️ Alerta de Prazos do Expert (CPC/2015)...\\n\\n### 🚀 Recomendações e Próximos Passos...",
+  "perito": "Nome do perito judicial nomeado (se houver menção nos autos, ex: 'Dr. João Silva'). Caso contrário, retorne 'Não nomeado'.",
+  "inversaoOnus": "Sim ou Não ou Não informado",
+  "honorarios": 4500.00, // Retorne apenas o número (float/int) do valor fixado pelo juiz ou proposto pelo perito se localizado. Se não localizado, retorne null.
+  "depositoJudicial": "Sim ou Não ou Parcial ou Não informado", // Indique se foi efetuado o depósito judicial do valor dos honorários
+  "dataHonorarios": "YYYY-MM-DD", // A data em que ocorreu a decisão fixando os honorários ou a petição de proposta. Se não localizado, retorne null.
+  "deadlines": [
+    {
+      "title": "Apresentar proposta de honorários",
+      "date": "YYYY-MM-DD",
+      "description": "Peticionar proposta de honorários, currículo e contatos profissionais. Art. 465, § 2º do CPC (prazo de 5 dias úteis).",
+      "cpcArticle": "Art. 465, § 2º"
+    }
+  ]
+}
+
+Aqui está o conteúdo de texto extraído do PDF do processo:
+=== INÍCIO DO TEXTO DO PDF ===
+${pdfText}
+=== FIM DO TEXTO DO PDF ===
+`;
+
+  try {
+    console.log(`[IA] Iniciando análise baseada no PDF para o processo: ${processData.numeroProcesso}`);
+    const aiText = await generateAiContent(promptText, geminiKey, 'analysis');
+    
+    if (!aiText) {
+      throw new Error('O provedor de IA retornou uma resposta vazia.');
+    }
+
+    const cleanJSONStr = aiText.trim().replace(/^```json/, '').replace(/```$/, '').trim();
+    const parsed = JSON.parse(cleanJSONStr);
+
+    res.json({
+      analysis: parsed.analysis || 'Falha ao estruturar o parecer.',
+      deadlines: parsed.deadlines || [],
+      perito: parsed.perito || 'Não nomeado',
+      inversaoOnus: parsed.inversaoOnus || 'Não informado',
+      honorarios: parsed.honorarios || null,
+      depositoJudicial: parsed.depositoJudicial || 'Não informado',
+      dataHonorarios: parsed.dataHonorarios || null
+    });
+  } catch (error) {
+    console.error('[IA] Erro ao processar a análise:', error);
+    res.status(500).json({
+      error: 'Falha interna ao processar a análise por IA.',
+      details: error.message
+    });
+  }
+});
+
+// Qualquer outra rota serve o index.html (SPA fallback)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.listen(PORT, () => {
+  console.log(`================================================================`);
+  console.log(`🚀 Monitor de Processos Judiciais iniciado com sucesso!`);
+  console.log(`💻 Acesse localmente em: http://localhost:${PORT}`);
+  console.log(`⚙️  Hospedagem configurada. Porta ativa: ${PORT}`);
+  console.log(`================================================================`);
+});
