@@ -677,9 +677,14 @@
                   <span class="pdf-filename" id="pdf-info-filename">processo.pdf</span>
                   <span class="pdf-filesize" id="pdf-info-details">Tamanho: 0 KB | 0 páginas</span>
                 </div>
-                <button class="md-btn-icon" id="btn-update-pdf-trigger" title="Atualizar arquivo PDF (Substituir)">
-                  <span class="material-symbols-rounded">autorenew</span>
-                </button>
+                <div style="display: flex; gap: 4px;">
+                  <button class="md-btn-icon" id="btn-download-supabase-pdf" title="Baixar arquivo PDF da nuvem" style="display: none;">
+                    <span class="material-symbols-rounded">download</span>
+                  </button>
+                  <button class="md-btn-icon" id="btn-update-pdf-trigger" title="Atualizar arquivo PDF (Substituir)">
+                    <span class="material-symbols-rounded">autorenew</span>
+                  </button>
+                </div>
               </div>
             </div>
             
@@ -908,6 +913,41 @@
               </button>
             </div>
           </div>
+
+          <div class="form-divider"></div>
+
+          <!-- Supabase Storage Config -->
+          <div class="settings-group">
+            <h4>Armazenamento em Nuvem (Supabase Storage)</h4>
+            <p class="settings-desc">Insira as credenciais do Supabase para hospedar e persistir os arquivos PDF na nuvem de forma gratuita.</p>
+            
+            <div class="form-field-group" style="margin-bottom: 12px;">
+              <label for="settings-supabase-url">Supabase Project URL</label>
+              <div class="md-text-field" style="margin-top: 4px;">
+                <span class="material-symbols-rounded field-icon">link</span>
+                <input type="text" id="settings-supabase-url" placeholder="https://xxxxxxxxxxxxxx.supabase.co">
+              </div>
+            </div>
+            
+            <div class="form-field-group" style="margin-bottom: 12px;">
+              <label for="settings-supabase-anon-key">Supabase Anon Key</label>
+              <div class="md-text-field" style="margin-top: 4px;">
+                <span class="material-symbols-rounded field-icon">key</span>
+                <input type="password" id="settings-supabase-anon-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+                <button class="clear-btn" id="btn-toggle-supabase-key-visibility" type="button">
+                  <span class="material-symbols-rounded" id="supabase-key-visibility-icon">visibility</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="form-field-group">
+              <label for="settings-supabase-bucket">Nome do Bucket (Padrão: processos-pdfs)</label>
+              <div class="md-text-field" style="margin-top: 4px;">
+                <span class="material-symbols-rounded field-icon">folder_open</span>
+                <input type="text" id="settings-supabase-bucket" placeholder="processos-pdfs">
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Tab 2: Importação em Lote por Nome -->
@@ -1106,6 +1146,9 @@
   
   <!-- Biblioteca PDF.js para extração de texto no lado do cliente (rápido e sem limites de tamanho) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+  
+  <!-- SDK do Supabase para Armazenamento na Nuvem -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   
   <script src="js/app.js"></script>
 </body>

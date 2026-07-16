@@ -36,6 +36,10 @@ const TRIBUNAIS = [
 // Estado da Aplicação (Variáveis Globais) - Sem simulações fictícias
 let customApiKey = '';
 let geminiApiKey = '';
+let supabaseUrl = '';
+let supabaseAnonKey = '';
+let supabaseBucket = 'processos-pdfs';
+let supabaseClient = null;
 let activeProcess = null;
 let currentCalendarMonth = new Date().getMonth();
 let currentCalendarYear = new Date().getFullYear();
@@ -554,6 +558,15 @@ function loadConfig() {
   
   geminiApiKey = localStorage.getItem('gemini_api_key') || '';
   document.getElementById('settings-gemini-key').value = geminiApiKey;
+
+  supabaseUrl = localStorage.getItem('supabase_url') || '';
+  document.getElementById('settings-supabase-url').value = supabaseUrl;
+
+  supabaseAnonKey = localStorage.getItem('supabase_anon_key') || '';
+  document.getElementById('settings-supabase-anon-key').value = supabaseAnonKey;
+
+  supabaseBucket = localStorage.getItem('supabase_bucket') || 'processos-pdfs';
+  document.getElementById('settings-supabase-bucket').value = supabaseBucket;
 }
 
 // Popula o select de tribunais do cadastro manual
@@ -786,6 +799,7 @@ function setupEventListeners() {
   // Chaves de visibilidade de API
   setupKeyVisibility('btn-toggle-gemini-key-visibility', 'settings-gemini-key', 'gemini-key-visibility-icon');
   setupKeyVisibility('btn-toggle-datajud-key-visibility', 'settings-datajud-key', 'datajud-key-visibility-icon');
+  setupKeyVisibility('btn-toggle-supabase-key-visibility', 'settings-supabase-anon-key', 'supabase-key-visibility-icon');
 
   // Gerenciamento de arquivos e dados
   document.getElementById('btn-export-data').addEventListener('click', exportData);
@@ -803,6 +817,28 @@ function setupEventListeners() {
     document.getElementById('pdf-file-input').click();
   });
   document.getElementById('pdf-file-input').addEventListener('change', handlePdfUpload);
+
+  const btnDownloadSupabase = document.getElementById('btn-download-supabase-pdf');
+  if (btnDownloadSupabase) {
+    btnDownloadSupabase.addEventListener('click', async () => {
+      if (!activeProcess || !activeProcess.pdfPath) return;
+      
+      btnDownloadSupabase.disabled = true;
+      try {
+        showToast('Obtendo link de acesso seguro do PDF...');
+        const url = await getPdfAccessUrl(activeProcess.pdfPath);
+        if (url) {
+          window.open(url, '_blank');
+        } else {
+          showToast('Não foi possível obter a URL do arquivo no Supabase Storage.', 4000);
+        }
+      } catch (err) {
+        showToast(`Erro ao abrir o PDF: ${err.message}`, 4000);
+      } finally {
+        btnDownloadSupabase.disabled = false;
+      }
+    });
+  }
 
   // Configuração das Abas do Modal de Detalhes
   const tabButtons = document.querySelectorAll('.dialog-tabs .tab-btn');
@@ -1408,6 +1444,83 @@ function getManualFormData(cleanCNJ) {
 }
 
 /* ==========================================================================
+   INTEGRAÇÃO E FUNÇÕES DO SUPABASE STORAGE (NUVEM)
+   ========================================================================== */
+
+function getSupabaseClient() {
+  if (supabaseClient) return supabaseClient;
+  if (!supabaseUrl || !supabaseAnonKey) return null;
+  try {
+    if (typeof supabase !== 'undefined' && supabase.createClient) {
+      supabaseClient = supabase.createClient(supabaseUrl, supabaseAnonKey);
+      return supabaseClient;
+    } else {
+      console.warn('[Supabase] SDK global não está disponível no escopo window.');
+      return null;
+    }
+  } catch (err) {
+    console.error('[Supabase] Falha ao instanciar o cliente:', err);
+    return null;
+  }
+}
+
+async function uploadPdfToSupabase(file, processNumber) {
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error('Supabase não configurado ou cliente indisponível. Verifique as configurações de APIs.');
+  }
+
+  // Nomeia o arquivo utilizando o e-mail do usuário sanitizado e o número do processo para organização
+  const fileExt = 'pdf';
+  const sanitizeEmail = (currentUserEmail || 'anon').replace(/[^a-zA-Z0-9]/g, '_');
+  const filePath = `${sanitizeEmail}/${processNumber}_${Date.now()}.${fileExt}`;
+
+  console.log(`[Supabase] Iniciando upload de ${file.name} para o caminho ${filePath}...`);
+  
+  const { data, error } = await client.storage
+    .from(supabaseBucket)
+    .upload(filePath, file, {
+      cacheControl: '3600',
+      upsert: true
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  console.log('[Supabase] Upload realizado com sucesso. Dados:', data);
+  return data.path;
+}
+
+async function getPdfAccessUrl(filePath) {
+  if (!filePath) return null;
+  if (filePath.startsWith('http')) return filePath;
+
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    // Tenta gerar a URL assinada privada (expira em 1 hora)
+    const { data, error } = await client.storage
+      .from(supabaseBucket)
+      .createSignedUrl(filePath, 3600);
+      
+    if (error) {
+      console.warn('[Supabase] Falha na URL assinada privada, tentando URL pública:', error);
+      // Fallback para URL pública caso o bucket esteja configurado como público
+      const { data: pubData } = client.storage
+        .from(supabaseBucket)
+        .getPublicUrl(filePath);
+      return pubData.publicUrl;
+    }
+    return data.signedUrl;
+  } catch (err) {
+    console.error('[Supabase] Erro ao obter URL do PDF:', err);
+    return null;
+  }
+}
+
+/* ==========================================================================
    LÓGICA DE UPLOAD E LEITURA DE PDF (CLIENT-SIDE COM LOADING BAR)
    ========================================================================== */
 
@@ -1475,6 +1588,7 @@ async function handlePdfUpload(e) {
     activeProcess.pdfSize = null;
     activeProcess.pdfPages = null;
     activeProcess.pdfUploadDate = null;
+    activeProcess.pdfPath = null; // Limpa o path anterior do Supabase
     
     // Extrai o texto localmente na máquina do usuário (rápido, sem carregar arquivos pro servidor)
     const parsedData = await extractTextFromPdfClient(file, (current, total) => {
@@ -1483,6 +1597,21 @@ async function handlePdfUpload(e) {
       textPercent.textContent = `${pct}%`;
       textStatus.textContent = `Lendo PDF localmente: página ${current} de ${total}`;
     });
+
+    // Envia arquivo para o Supabase se configurado
+    let supabasePath = null;
+    if (supabaseUrl && supabaseAnonKey) {
+      fillBar.style.width = '95%';
+      textPercent.textContent = '95%';
+      textStatus.textContent = "Fazendo upload do PDF para o Supabase Storage...";
+      
+      try {
+        supabasePath = await uploadPdfToSupabase(file, activeProcess.numeroProcesso);
+      } catch (uploadErr) {
+        console.error("Falha ao subir PDF para o Supabase:", uploadErr);
+        showToast(`Alerta: Falha ao salvar arquivo no Supabase: ${uploadErr.message}. O texto foi extraído com sucesso mas o arquivo original não pôde ser salvo na nuvem.`, 7000);
+      }
+    }
 
     // Atualiza status do carregador antes da chamada da IA
     fillBar.style.width = '99%';
@@ -1519,6 +1648,7 @@ async function handlePdfUpload(e) {
     activeProcess.pdfSize = file.size;
     activeProcess.pdfPages = parsedData.numPages;
     activeProcess.pdfUploadDate = new Date().toISOString();
+    activeProcess.pdfPath = supabasePath; // Salva o caminho do arquivo no Supabase
     activeProcess.expertInfo = expertInfo;
     
     // Se a IA extraiu a lista de todas as partes qualificadas no PDF, atualiza no cadastro do processo
@@ -1934,6 +2064,7 @@ function renderPdfStatusCard(process) {
   const activeState = document.getElementById('pdf-status-active');
   const outdatedBanner = document.getElementById('pdf-outdated-banner');
   const containerLoading = document.getElementById('pdf-loading-container');
+  const btnDownloadSupabase = document.getElementById('btn-download-supabase-pdf');
 
   // Garante que o loading esteja oculto se não estiver indexando
   containerLoading.style.display = 'none';
@@ -1949,12 +2080,19 @@ function renderPdfStatusCard(process) {
     const chars = process.pdfText.length;
     document.getElementById('pdf-info-details').textContent = `Tamanho: ${sizeKB} KB | Páginas: ${pages} | Texto extraído: ${chars} caracteres`;
 
+    if (btnDownloadSupabase) {
+      btnDownloadSupabase.style.display = process.pdfPath ? 'inline-flex' : 'none';
+    }
+
     const isOutdated = isPdfOutdated(process);
     outdatedBanner.style.display = isOutdated ? 'flex' : 'none';
   } else {
     emptyState.style.display = 'flex';
     activeState.style.display = 'none';
     outdatedBanner.style.display = 'none';
+    if (btnDownloadSupabase) {
+      btnDownloadSupabase.style.display = 'none';
+    }
   }
 }
 
@@ -2254,12 +2392,25 @@ function copyAIAnalysisText() {
 async function saveSettings() {
   const dKey = document.getElementById('settings-datajud-key').value.trim();
   const gKey = document.getElementById('settings-gemini-key').value.trim();
+  const sUrl = document.getElementById('settings-supabase-url').value.trim();
+  const sAnon = document.getElementById('settings-supabase-anon-key').value.trim();
+  let sBucket = document.getElementById('settings-supabase-bucket').value.trim();
+
+  if (!sBucket) sBucket = 'processos-pdfs';
 
   customApiKey = dKey;
   geminiApiKey = gKey;
+  supabaseUrl = sUrl;
+  supabaseAnonKey = sAnon;
+  supabaseBucket = sBucket;
 
   localStorage.setItem('datajud_api_key', dKey);
   localStorage.setItem('gemini_api_key', gKey);
+  localStorage.setItem('supabase_url', sUrl);
+  localStorage.setItem('supabase_anon_key', sAnon);
+  localStorage.setItem('supabase_bucket', sBucket);
+
+  supabaseClient = null; // Invalida cliente antigo para recriar com novas chaves
 
   closeDialog('settings-dialog');
   await renderDashboard();
