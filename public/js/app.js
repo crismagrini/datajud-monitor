@@ -2888,52 +2888,6 @@ async function generateAIAnalysis() {
         tipo: 'Não informada'
       }));
     }
-      }
-    }
-
-    if (result.dataHonorarios && result.dataHonorarios !== null) {
-      expert.dataHonorarios = result.dataHonorarios;
-    }
-    if (result.dataDeposito && result.dataDeposito !== null) {
-      expert.dataDeposito = result.dataDeposito;
-    }
-    if (result.resumoProcesso && result.resumoProcesso !== 'Não localizado') {
-      expert.resumoProcesso = result.resumoProcesso;
-    }
-
-    if (result.classeProcessual) {
-      activeProcess.classe = activeProcess.classe || {};
-      activeProcess.classe.nome = result.classeProcessual;
-    }
-    if (result.assuntoPrincipal) {
-      activeProcess.assuntos = activeProcess.assuntos || [];
-      if (!activeProcess.assuntos.some(a => a.nome === result.assuntoPrincipal)) {
-        activeProcess.assuntos.unshift({ nome: result.assuntoPrincipal });
-      }
-    }
-    if (result.orgaoJulgador) {
-      activeProcess.orgaoJulgador = activeProcess.orgaoJulgador || {};
-      activeProcess.orgaoJulgador.nome = result.orgaoJulgador;
-    }
-    if (result.ultimaMovimentacao) {
-      activeProcess.movimentos = activeProcess.movimentos || [];
-      activeProcess.movimentos.unshift({
-        nome: 'Última Movimentação (IA)',
-        dataHora: new Date().toISOString(),
-        detalhes: result.ultimaMovimentacao
-      });
-    }
-    if (result.valorCausa !== null && result.valorCausa !== undefined) {
-      activeProcess.valorCausa = parseFloat(result.valorCausa);
-    }
-
-    if (Array.isArray(result.todasPartes) && result.todasPartes.length > 0) {
-      activeProcess.partes = result.todasPartes.map(p => ({
-        nome: p.nome,
-        polo: p.polo === 'PASSIVO' ? 'PASSIVO' : 'ATIVO',
-        tipo: 'Não informada'
-      }));
-    }
 
     // Converte os prazos forenses calculados pela IA em tarefas do perito
     if (result.deadlines && Array.isArray(result.deadlines)) {
