@@ -2232,8 +2232,19 @@ async function renderDashboard(filterQuery = '') {
   document.getElementById('empty-state-monitored').style.display = 'none';
 
   filtered.forEach(proc => {
-    const autor = proc.partes?.find(p => p.polo === 'ATIVO')?.nome || 'Não informado';
-    const reu = proc.partes?.find(p => p.polo === 'PASSIVO')?.nome || 'Não informado';
+    let autor = proc.partes?.find(p => p.polo === 'ATIVO')?.nome || 'Não informado';
+    if (autor === 'Não informado' || autor === 'Autor Não Informado') {
+      if (proc.expertInfo?.autor && proc.expertInfo.autor !== 'Não localizado') {
+        autor = proc.expertInfo.autor;
+      }
+    }
+
+    let reu = proc.partes?.find(p => p.polo === 'PASSIVO')?.nome || 'Não informado';
+    if (reu === 'Não informado' || reu === 'Réu Não Informado') {
+      if (proc.expertInfo?.reu && proc.expertInfo.reu !== 'Não localizado') {
+        reu = proc.expertInfo.reu;
+      }
+    }
     
     const card = document.createElement('div');
     card.className = 'process-card';
@@ -2880,13 +2891,30 @@ async function generateAIAnalysis() {
       activeProcess.valorCausa = parseFloat(result.valorCausa);
     }
 
-    if (result.partesCompletas || Array.isArray(result.todasPartes)) {
-      const detected = Array.isArray(result.todasPartes) ? result.todasPartes : result.partesCompletas;
-      activeProcess.partes = detected.map(p => ({
+    if (Array.isArray(result.todasPartes) && result.todasPartes.length > 0) {
+      activeProcess.partes = result.todasPartes.map(p => ({
         nome: p.nome,
         polo: p.polo === 'PASSIVO' ? 'PASSIVO' : 'ATIVO',
         tipo: 'Não informada'
       }));
+    } else {
+      activeProcess.partes = activeProcess.partes || [];
+      if (result.autor && result.autor !== 'Não localizado' && result.autor !== 'Autor Não Informado') {
+        let activeParty = activeProcess.partes.find(p => p.polo === 'ATIVO');
+        if (activeParty) {
+          activeParty.nome = result.autor;
+        } else {
+          activeProcess.partes.push({ nome: result.autor, polo: 'ATIVO', tipo: 'Não informada' });
+        }
+      }
+      if (result.reu && result.reu !== 'Não localizado' && result.reu !== 'Réu Não Informado') {
+        let passiveParty = activeProcess.partes.find(p => p.polo === 'PASSIVO');
+        if (passiveParty) {
+          passiveParty.nome = result.reu;
+        } else {
+          activeProcess.partes.push({ nome: result.reu, polo: 'PASSIVO', tipo: 'Não informada' });
+        }
+      }
     }
 
     // Converte os prazos forenses calculados pela IA em tarefas do perito
