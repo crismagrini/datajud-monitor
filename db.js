@@ -44,18 +44,33 @@ async function initDb() {
       supabase = createClient(supabaseUrl, supabaseKey, {
         auth: { persistSession: false }
       });
-      // Testa a conexão realizando uma query leve na tabela users
-      const { error } = await supabase.from('users').select('email').limit(1);
-      if (error) {
-        console.error('⚠️ Falha de comunicação com o Supabase. Verifique se as tabelas existem ou se as credenciais estão corretas:', error.message);
+      // Testa a conexão realizando uma query leve na tabela users com limite de 4 segundos
+      let timeoutId;
+      const connectionTest = supabase.from('users').select('email').limit(1);
+      const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Tempo limite de conexão esgotado (4s)')), 4000);
+      });
+
+      try {
+        const { error } = await Promise.race([connectionTest, timeout]);
+        clearTimeout(timeoutId);
+        
+        if (error) {
+          console.error('⚠️ Falha de comunicação com o Supabase. Verifique se as tabelas existem ou se as credenciais estão corretas:', error.message);
+          console.log('🔄 Utilizando persistência em arquivos JSON locais temporariamente.');
+          useSupabase = false;
+        } else {
+          console.log('🔌 Conectado ao Supabase com sucesso!');
+          useSupabase = true;
+        }
+      } catch (err) {
+        clearTimeout(timeoutId);
+        console.error('⚠️ Erro ao tentar inicializar o cliente do Supabase:', err.message);
         console.log('🔄 Utilizando persistência em arquivos JSON locais temporariamente.');
         useSupabase = false;
-      } else {
-        console.log('🔌 Conectado ao Supabase com sucesso!');
-        useSupabase = true;
       }
     } catch (err) {
-      console.error('⚠️ Erro ao tentar inicializar o cliente do Supabase:', err.message);
+      console.error('⚠️ Erro ao criar o cliente do Supabase:', err.message);
       console.log('🔄 Utilizando persistência em arquivos JSON locais temporariamente.');
       useSupabase = false;
     }

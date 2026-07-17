@@ -2768,32 +2768,173 @@ async function generateAIAnalysis() {
     
     activeProcess.aiAnalysis = result.analysis;
     activeProcess.aiAnalysisDate = new Date().toISOString();
-    
-    // Atualiza a Ficha Técnica com os dados extraídos pelo parecer completo
+
     if (!activeProcess.expertInfo) {
       activeProcess.expertInfo = {};
     }
+    const expert = activeProcess.expertInfo;
+
     if (result.perito && result.perito !== 'Não nomeado') {
-      activeProcess.expertInfo.perito = result.perito;
+      expert.perito = result.perito;
     }
+    if (!expert.perito || expert.perito === 'Não nomeado') {
+      expert.perito = result.perito || 'Não nomeado';
+    }
+
     if (result.inversaoOnus && result.inversaoOnus !== 'Não informado') {
-      activeProcess.expertInfo.inversaoOnus = result.inversaoOnus;
+      expert.inversaoOnus = result.inversaoOnus;
+    } else {
+      const m = (result.analysis || '').match(/invers[ãa]o.*?\b(sim|n[ãa]o)\b/i);
+      if (m) {
+        expert.inversaoOnus = m[1].toLowerCase().startsWith('s') ? 'Sim' : 'Não';
+      }
     }
-    
-    // Salva novas informações financeiras extraídas pela IA
-    if (result.honorarios) {
-      activeProcess.expertInfo.honorarios = parseFloat(result.honorarios);
+
+    if (result.justicaGratuita && result.justicaGratuita !== 'Não informado') {
+      expert.justicaGratuita = result.justicaGratuita;
+    } else {
+      const m = (result.analysis || '').match(/justi[çc]a gratuita.*?\b( concedid[ao]|sim|n[ãa]o)\b/i);
+      if (m) {
+        if (/concedid|sim/i.test(m[1])) expert.justicaGratuita = 'Sim';
+        else expert.justicaGratuita = 'Não';
+      }
     }
+
+    if (result.cidadeEstado && result.cidadeEstado !== 'Não localizado') {
+      expert.cidadeEstado = result.cidadeEstado;
+    }
+    if (result.autor && result.autor !== 'Não localizado') {
+      expert.autor = result.autor;
+    }
+    if (result.reu && result.reu !== 'Não localizado') {
+      expert.reu = result.reu;
+    }
+    if (result.objetoPericia && result.objetoPericia !== 'Não localizado') {
+      expert.objetoPericia = result.objetoPericia;
+    }
+
+    let honorariosVal = parseFloat(result.honorarios);
+    if (isNaN(honorariosVal) || honorariosVal <= 0) {
+      const m = (result.analysis || '').match(/honor[áa]rios[^0-9]{0,80}R?\$?\s*([\d\.]+,\d{2}|\d{3,})/i);
+      if (m) {
+        honorariosVal = parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
+      }
+    }
+    if (!isNaN(honorariosVal) && honorariosVal > 0) {
+      expert.honorarios = honorariosVal;
+    }
+
+    let ufespVal = parseFloat(result.honorariosUfesp);
+    if (isNaN(ufespVal) || ufespVal <= 0) {
+      const m = (result.analysis || '').match(/(\d+(?:[.,]\d+)?)\s*ufesp/i);
+      if (m) ufespVal = parseFloat(m[1].replace(',', '.'));
+    }
+    if (!isNaN(ufespVal) && ufespVal > 0) {
+      expert.honorariosUfesp = ufespVal;
+    }
+
     if (result.depositoJudicial && result.depositoJudicial !== 'Não informado') {
-      activeProcess.expertInfo.depositoJudicial = result.depositoJudicial;
+      expert.depositoJudicial = result.depositoJudicial;
+    } else {
+      const text = (result.analysis || '').toLowerCase();
+      if (text.includes('depósito realizado') || text.includes('deposito realizado') || text.includes('depósito efetuad')) {
+        expert.depositoJudicial = 'Sim';
+      } else if (text.includes('sem depósito') || text.includes('depósito pendente')) {
+        expert.depositoJudicial = 'Não';
+      }
     }
-    if (result.dataHonorarios) {
-      activeProcess.expertInfo.dataHonorarios = result.dataHonorarios;
+
+    if (result.dataHonorarios && result.dataHonorarios !== null) {
+      expert.dataHonorarios = result.dataHonorarios;
     }
-    if (result.resumoProcesso) {
-      activeProcess.expertInfo.resumoProcesso = result.resumoProcesso;
+    if (result.dataDeposito && result.dataDeposito !== null) {
+      expert.dataDeposito = result.dataDeposito;
     }
-    
+    if (result.resumoProcesso && result.resumoProcesso !== 'Não localizado') {
+      expert.resumoProcesso = result.resumoProcesso;
+    }
+
+    if (result.classeProcessual) {
+      activeProcess.classe = activeProcess.classe || {};
+      activeProcess.classe.nome = result.classeProcessual;
+    }
+    if (result.assuntoPrincipal) {
+      activeProcess.assuntos = activeProcess.assuntos || [];
+      if (!activeProcess.assuntos.some(a => a.nome === result.assuntoPrincipal)) {
+        activeProcess.assuntos.unshift({ nome: result.assuntoPrincipal });
+      }
+    }
+    if (result.orgaoJulgador) {
+      activeProcess.orgaoJulgador = activeProcess.orgaoJulgador || {};
+      activeProcess.orgaoJulgador.nome = result.orgaoJulgador;
+    }
+    if (result.ultimaMovimentacao) {
+      activeProcess.movimentos = activeProcess.movimentos || [];
+      activeProcess.movimentos.unshift({
+        nome: 'Última Movimentação (IA)',
+        dataHora: new Date().toISOString(),
+        detalhes: result.ultimaMovimentacao
+      });
+    }
+    if (result.valorCausa !== null && result.valorCausa !== undefined) {
+      activeProcess.valorCausa = parseFloat(result.valorCausa);
+    }
+
+    if (result.partesCompletas || Array.isArray(result.todasPartes)) {
+      const detected = Array.isArray(result.todasPartes) ? result.todasPartes : result.partesCompletas;
+      activeProcess.partes = detected.map(p => ({
+        nome: p.nome,
+        polo: p.polo === 'PASSIVO' ? 'PASSIVO' : 'ATIVO',
+        tipo: 'Não informada'
+      }));
+    }
+      }
+    }
+
+    if (result.dataHonorarios && result.dataHonorarios !== null) {
+      expert.dataHonorarios = result.dataHonorarios;
+    }
+    if (result.dataDeposito && result.dataDeposito !== null) {
+      expert.dataDeposito = result.dataDeposito;
+    }
+    if (result.resumoProcesso && result.resumoProcesso !== 'Não localizado') {
+      expert.resumoProcesso = result.resumoProcesso;
+    }
+
+    if (result.classeProcessual) {
+      activeProcess.classe = activeProcess.classe || {};
+      activeProcess.classe.nome = result.classeProcessual;
+    }
+    if (result.assuntoPrincipal) {
+      activeProcess.assuntos = activeProcess.assuntos || [];
+      if (!activeProcess.assuntos.some(a => a.nome === result.assuntoPrincipal)) {
+        activeProcess.assuntos.unshift({ nome: result.assuntoPrincipal });
+      }
+    }
+    if (result.orgaoJulgador) {
+      activeProcess.orgaoJulgador = activeProcess.orgaoJulgador || {};
+      activeProcess.orgaoJulgador.nome = result.orgaoJulgador;
+    }
+    if (result.ultimaMovimentacao) {
+      activeProcess.movimentos = activeProcess.movimentos || [];
+      activeProcess.movimentos.unshift({
+        nome: 'Última Movimentação (IA)',
+        dataHora: new Date().toISOString(),
+        detalhes: result.ultimaMovimentacao
+      });
+    }
+    if (result.valorCausa !== null && result.valorCausa !== undefined) {
+      activeProcess.valorCausa = parseFloat(result.valorCausa);
+    }
+
+    if (Array.isArray(result.todasPartes) && result.todasPartes.length > 0) {
+      activeProcess.partes = result.todasPartes.map(p => ({
+        nome: p.nome,
+        polo: p.polo === 'PASSIVO' ? 'PASSIVO' : 'ATIVO',
+        tipo: 'Não informada'
+      }));
+    }
+
     // Converte os prazos forenses calculados pela IA em tarefas do perito
     if (result.deadlines && Array.isArray(result.deadlines)) {
       activeProcess.tasks = result.deadlines.map((d, index) => ({
@@ -2808,12 +2949,14 @@ async function generateAIAnalysis() {
     } else {
       activeProcess.tasks = [];
     }
-    
+
     await ProcessService.update(activeProcess);
     await renderDashboard();
-    renderExpertInfoCard(activeProcess); // Atualiza os campos do card na hora!
+    renderExpertInfoCard(activeProcess);
     renderAIAnalysisTab();
-    
+    if (typeof renderProcessModalHeader === 'function') renderProcessModalHeader(activeProcess);
+    if (typeof refreshPartesEnvolvidas === 'function') refreshPartesEnvolvidas(activeProcess);
+
     showToast('Análise baseada no PDF concluída com sucesso!');
   } catch (err) {
     clearInterval(timer);

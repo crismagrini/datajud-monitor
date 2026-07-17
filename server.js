@@ -869,36 +869,55 @@ app.post('/api/analyze-process', authenticateToken, async (req, res) => {
 Você é um consultor jurídico e assistente de IA de alta performance, especializado no Código de Processo Civil (CPC/2015) brasileiro.
 Seu foco principal é auxiliar Peritos Judiciais e Assistentes Técnicos (Auxiliares da Justiça / Experts) na análise de autos processuais.
 
+INSTRUÇÃO CRÍTICA DE PROFUNDIDADE NA LEITURA DO PDF INTEIRO:
+- O texto fornecido pode conter QUALQUER informação necessária (incluindo dados do cadastro do processo: classe, assunto, órgão julgador, partes, última movimentação, comarca, perito nomeado, honorários, justiça gratuita, inversão do ônus, depósito, datas) em QUALQUER página do processo, não apenas no início.
+- Leia o PDF de forma INTEGRAL e APROFUNDADA antes de devolver qualquer campo. Procure em petições iniciais, decisões interlocutórias, despachos, sentenças, atas de audiência, certidões, movimentações e cabeçalhos.
+- APENAS devolva "Não localizado", "Não nomeado", "Não informado" ou null quando TIVER LIDO O PDF INTEIRO e confirmado que a informação NÃO existe em parte alguma do documento. Se houver 1% de chance da informação estar em uma seção que você não explorou a fundo, leia novamente.
+- Termos sinônimos a considerar:
+   * "requerente" = "autor" = "polo ativo"; "requerido" = "réu" = "polo passivo"
+   * "nomeio" / "nomeio para o cargo de perito" / "nomeação de perito" para indicar nomeação de perito
+   * "arbitro honorários" / "fixo honorários em" / "arbitramento" para honorários
+   * "vara" / "juízo" / "foro" / "comarca" para comarca
+   * "classe" / "tipo de ação" / "procedimento" para classe processual
+   * "assunto" / "matéria" / "objeto do processo" para assunto principal
+   * "órgão julgador" / "vara" / "juízo" para órgão julgador
+- Para comarca: procure cabeçalhos como "Vara", "Foro de", "Comarca de", "Juízo da ... de ..."
+- Para partes: procure cabeçalhos como "REQUERENTE:", "REQUERIDO:", "POLO ATIVO:", "POLO PASSIVO:"
+- Para movimentações: procure "último andamento", "movimento:", "intimação:", "certidão:".
+
 Sua tarefa é analisar o texto extraído da cópia integral de um processo em PDF e gerar as seguintes informações:
 1. Um parecer/relatório analítico detalhado em português (formato Markdown).
-2. O nome completo do perito nomeado (analise profundamente as decisões judiciais para encontrar o nome do perito nomeado de fato, não ignore).
-3. Informações financeiras da perícia: o valor de honorários arbitrados ou propostos, se o depósito judicial correspondente foi efetuado pelas partes responsáveis, a data de fixação/proposta dos honorários e a data do depósito judicial correspondente (se houver).
-4. Indicação de concessão de Justiça Gratuita e de Inversão do Ônus da Prova (da Causa).
-5. Uma lista estruturada (JSON array) contendo os prazos processuais (deadlines) calculados.
+2. DADOS COMPLETOS DO CADASTRO DO PROCESSO: classe processual, assunto principal, órgão julgador, requerente, requerido, última movimentação, comarca, valor da causa (se houver).
+3. O nome completo do perito nomeado (leia todas as decisões para encontrar o nome real).
+4. FICHA TÉCNICA DO EXPERT: justiça gratuita, inversão do ônus, comarca, objeto da perícia, honorários (BRL e UFESP), depósito judicial, datas de honorários e depósito, resumo do processo.
+5. Uma lista estruturada (JSON array) com prazos processuais.
 
-INSTRUÇÕES IMPORTANTES PARA O PARECER:
-- Baseie sua análise estritamente no texto do PDF fornecido. Jamais invente fatos, nomes ou dados fictícios.
-- Identifique os prazos críticos aplicáveis ao Perito do juízo ou Assistentes Técnicos (Proposta de honorários, escusa, resposta a esclarecimentos, entrega de laudo, parecer técnico discordante/concordante).
-- O parecer deve ser em português claro e bem estruturado.
-- Chame as partes de Requerente (polo ativo) e Requerido (polo passivo).
+INSTRUÇÕES PARA OS PRAZOS (DEADLINES):
+- Para cada prazo encontrado, determine data limite real (YYYY-MM-DD). Calcule com base em datas de intimação/publicação no PDF (apenas dias úteis, pulando finais de semana e feriados nacionais, conforme CPC/2015). Se a data de intimação não constar, estime com base no andamento mais recente ou use como referência o dia de hoje (${new Date().toLocaleDateString('pt-BR')}).
 
-INSTRUÇÕES IMPORTANTES PARA OS PRAZOS (DEADLINES):
-- Para cada prazo encontrado ou aplicável, determine uma data limite real (formato YYYY-MM-DD). Calcule a data limite com base nas datas de intimação ou publicação citadas no PDF (use apenas dias úteis para o cálculo, pulando finais de semana e feriados nacionais, seguindo o CPC/2015). Se a data da intimação ou publicação do prazo específico não constar no texto, estime a data limite com base no andamento mais recente dos autos ou use como referência o dia de hoje (${new Date().toLocaleDateString('pt-BR')}).
+Você deve responder APENAS com um objeto JSON válido, sem QUALQUER texto de introdução ou conclusão. O JSON deve ter EXATAMENTE esta estrutura (TODOS os campos são obrigatórios):
 
-Você deve responder APENAS com um objeto JSON válido, sem qualquer texto de introdução ou conclusão. O JSON deve ter exatamente a seguinte estrutura:
 {
   "analysis": "### 📋 Resumo da Demanda (Objeto da Lide)...\\n\\n### ⚖️ Histórico de Atuação da Perícia...\\n\\n### ⚠️ Alerta de Prazos do Expert (CPC/2015)...\\n\\n### 🚀 Recomendações e Próximos Passos...",
-  "perito": "Nome do perito judicial nomeado (se houver menção nos autos, ex: 'Dr. João Silva'). Caso contrário, retorne 'Não nomeado'. Faça uma análise detalhada das decisões judiciais no texto para extrair o nome.",
-  "justicaGratuita": "Sim ou Não ou Não informado",
-  "inversaoOnus": "Sim ou Não ou Não informado",
-  "comarca": "Nome da comarca/foro deste processo (ex: 'Foro de Jundiaí/SP').",
-  "objetoPericia": "Resumo sumário (máximo de 15 palavras) do objeto técnico da perícia ou disputa técnica (ex: 'Apurar suposto erro em cirurgia bariátrica').",
-  "honorarios": 4500.00, // Retorne apenas o número (float/int) do valor fixado pelo juiz ou proposto pelo perito se localizado em BRL. Se não localizado, retorne null.
-  "honorariosUfesp": 15, // Se os honorários foram fixados em UFESPs, informe a quantidade de UFESPs aqui. Caso contrário, retorne null.
-  "depositoJudicial": "Sim ou Não ou Parcial ou Não informado", // Indique se foi efetuado o depósito judicial do valor dos honorários
-  "dataHonorarios": "YYYY-MM-DD", // A data em que ocorreu a decisão fixando os honorários ou a petição de proposta. Se não localizado, retorne null.
-  "dataDeposito": "YYYY-MM-DD", // A data em que foi efetuado o depósito judicial do valor dos honorários pelas partes. Se não localizado, retorne null.
-  "resumoProcesso": "Resumo curto (máximo 45 palavras) sobre a nomeação do perito e proposta de honorários, detalhando se a proposta foi aceita/homologada ou se houve arbitramento de valores pelo juiz.",
+  "perito": "Nome completo do perito judicial nomeado (ex: 'Kleber Cristiano Magrini'). Use o nome do jeito que estiver no documento. Se realmente não houver menção, retorne 'Não nomeado'.",
+  "autor": "Nome completo do Requerente/Autor (polo ativo).",
+  "reu": "Nome completo do Requerido/Réu (polo passivo).",
+  "classeProcessual": "Classe processual (ex: 'Procedimento Comum Cível', 'Indenização', etc.).",
+  "assuntoPrincipal": "Assunto principal do processo (ex: 'Indenização por Danos Morais', 'Anulação de Abertura de Conta').",
+  "orgaoJulgador": "Vara ou Juízo onde tramita o processo (ex: '2ª Vara Cível de Guarujá').",
+  "ultimaMovimentacao": "Resumo curto da última movimentação do processo (ex: 'Distribuído por sorteio em 15/07/2025').",
+  "justicaGratuita": "Apenas 'Sim' ou 'Não' ou 'Não informado'",
+  "inversaoOnus": "Apenas 'Sim' ou 'Não' ou 'Não informado'",
+  "comarca": "Nome da comarca/foro deste processo (ex: 'Foro de Guarujá/SP').",
+  "objetoPericia": "Resumo sumário (máximo 15 palavras) do objeto técnico da perícia. Se inexistente, 'Não localizado'.",
+  "valorCausa": 10000.00,
+  "honorarios": 4500.00,
+  "honorariosUfesp": 15,
+  "depositoJudicial": "Apenas 'Sim', 'Não', 'Parcial' ou 'Não informado'",
+  "dataHonorarios": "YYYY-MM-DD ou null",
+  "dataDeposito": "YYYY-MM-DD ou null",
+  "resumoProcesso": "Resumo curto (máximo 45 palavras) sobre nomeação do perito e proposta de honorários.",
+  "todasPartes": [{"nome": "...", "polo": "ATIVO"}, {"nome": "...", "polo": "PASSIVO"}],
   "deadlines": [
     {
       "title": "Apresentar proposta de honorários",
@@ -934,12 +953,20 @@ ${pdfText}
       justicaGratuita: parsed.justicaGratuita || 'Não informado',
       cidadeEstado: parsed.comarca || parsed.cidadeEstado || 'Não localizado',
       objetoPericia: parsed.objetoPericia || 'Não localizado',
+      autor: parsed.autor || 'Não localizado',
+      reu: parsed.reu || 'Não localizado',
+      classeProcessual: parsed.classeProcessual || '',
+      assuntoPrincipal: parsed.assuntoPrincipal || '',
+      orgaoJulgador: parsed.orgaoJulgador || '',
+      ultimaMovimentacao: parsed.ultimaMovimentacao || '',
+      valorCausa: parsed.valorCausa || null,
       honorarios: parsed.honorarios || null,
       honorariosUfesp: parsed.honorariosUfesp || null,
       depositoJudicial: parsed.depositoJudicial || 'Não informado',
       dataHonorarios: parsed.dataHonorarios || null,
       dataDeposito: parsed.dataDeposito || null,
-      resumoProcesso: parsed.resumoProcesso || 'Não localizado'
+      resumoProcesso: parsed.resumoProcesso || 'Não localizado',
+      todasPartes: parsed.todasPartes || []
     });
   } catch (error) {
     console.error('[IA] Erro ao processar a análise:', error);
@@ -1106,6 +1133,55 @@ app.post('/api/dev/blacklist/remove', authenticateDevToken, async (req, res) => 
 // Qualquer outra rota serve o index.html (SPA fallback)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Rota de diagnóstico para testar a chave do Gemini (lê do .env)
+app.post('/api/test-gemini', async (req, res) => {
+  const geminiKey = req.body.apiKey || process.env.GEMINI_API_KEY;
+
+  if (!geminiKey) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Nenhuma chave Gemini fornecida. Defina GEMINI_API_KEY no .env ou envie apiKey no body.'
+    });
+  }
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: 'Responda apenas com: OK' }] }]
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        ok: false,
+        status: response.status,
+        error: data.error?.message || 'Erro retornado pela API do Gemini.',
+        details: data
+      });
+    }
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    res.json({
+      ok: true,
+      status: response.status,
+      model: 'gemini-2.0-flash',
+      response: text.trim(),
+      message: 'Chave do Gemini está funcionando corretamente!'
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: 'Falha ao conectar com a API do Gemini.',
+      details: err.message
+    });
+  }
 });
 
 // Inicializa o banco de dados (Supabase/Local) e depois escuta na porta correspondente
