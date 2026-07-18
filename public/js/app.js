@@ -1023,6 +1023,8 @@ function setupEventListeners() {
     document.getElementById('edit-expert-honorarios-ufesp').value = info.honorariosUfesp || '';
     document.getElementById('edit-expert-deposito').value = info.depositoJudicial || 'Não informado';
     document.getElementById('edit-expert-data-deposito').value = info.dataDeposito || '';
+    document.getElementById('edit-expert-valor-deposito').value = info.valorDeposito || '';
+    document.getElementById('edit-expert-data-laudo').value = info.dataEntregaLaudo || '';
     document.getElementById('edit-expert-data-honorarios').value = info.dataHonorarios || '';
     document.getElementById('edit-expert-objeto').value = info.objetoPericia || '';
     document.getElementById('edit-expert-resumo').value = info.resumoProcesso || '';
@@ -1038,6 +1040,7 @@ function setupEventListeners() {
     
     const honorariosVal = parseFloat(document.getElementById('edit-expert-honorarios').value);
     const honorariosUfespVal = parseFloat(document.getElementById('edit-expert-honorarios-ufesp').value);
+    const valorDepositoVal = parseFloat(document.getElementById('edit-expert-valor-deposito').value);
     activeProcess.expertInfo = {
       autor: document.getElementById('edit-expert-autor').value.trim() || 'Não localizado',
       reu: document.getElementById('edit-expert-reu').value.trim() || 'Não localizado',
@@ -1049,6 +1052,8 @@ function setupEventListeners() {
       honorariosUfesp: isNaN(honorariosUfespVal) ? null : honorariosUfespVal,
       depositoJudicial: document.getElementById('edit-expert-deposito').value,
       dataDeposito: document.getElementById('edit-expert-data-deposito').value || null,
+      valorDeposito: isNaN(valorDepositoVal) ? null : valorDepositoVal,
+      dataEntregaLaudo: document.getElementById('edit-expert-data-laudo').value || null,
       dataHonorarios: document.getElementById('edit-expert-data-honorarios').value || null,
       objetoPericia: document.getElementById('edit-expert-objeto').value.trim() || 'Não localizado',
       resumoProcesso: document.getElementById('edit-expert-resumo').value.trim() || 'Não localizado'
@@ -2438,6 +2443,7 @@ async function openProcessDetails(process) {
 
     cloneArchive.addEventListener('click', async () => {
       process.archived = !process.archived;
+      process.archivedDate = process.archived ? new Date().toISOString().split('T')[0] : null;
       await ProcessService.update(process);
       showToast(process.archived ? "Processo arquivado!" : "Processo desarquivado!");
       closeDialog('process-detail-dialog');
@@ -2527,13 +2533,24 @@ function renderExpertInfoCard(process) {
   }
   document.getElementById('expert-val-honorarios').textContent = honorariosBaseHtml;
   
-  // Depósito Judicial com Data
+  // Depósito Judicial com Data e Valor
   let depositoHtml = info.depositoJudicial || 'Não informado';
+  if (info.valorDeposito) {
+    depositoHtml += ` (Valor: ${formatCurrency(info.valorDeposito)})`;
+  }
   if (info.dataDeposito) {
     const depDateStr = new Date(info.dataDeposito + 'T12:00:00').toLocaleDateString('pt-BR');
-    depositoHtml += ` (em ${depDateStr})`;
+    depositoHtml += ` em ${depDateStr}`;
   }
   document.getElementById('expert-val-deposito').textContent = depositoHtml;
+  
+  // Entrega do Laudo
+  let entregaLaudoHtml = 'Pendente';
+  if (info.dataEntregaLaudo) {
+    const entregaDateStr = new Date(info.dataEntregaLaudo + 'T12:00:00').toLocaleDateString('pt-BR');
+    entregaLaudoHtml = `Entregue em ${entregaDateStr}`;
+  }
+  document.getElementById('expert-val-data-laudo').textContent = entregaLaudoHtml;
   
   // Honorários Corrigidos
   const baseDateStr = info.dataDeposito || info.dataHonorarios || process.dataAjuizamento || null;
@@ -2548,8 +2565,31 @@ function renderExpertInfoCard(process) {
 
   let honorariosCorrigidos = 'Não informado';
   if (info.honorarios) {
-    const corrigidoVal = calculateUpdatedFees(info.honorarios, baseDateStr, process.tribunal);
-    honorariosCorrigidos = `${corrigidoVal} (${labelOrigem})`;
+    const corrigidoVal = calculateUpdatedFees(info.honorarios, baseDateStr, process.tribunal, info.dataEntregaLaudo, process.archivedDate);
+    
+    // Calcula taxas e dias para exibição de ajuda/detalhes
+    let endDate = new Date();
+    let labelStop = '';
+    if (info.dataEntregaLaudo) {
+      const deliveryDate = new Date(info.dataEntregaLaudo + 'T12:00:00');
+      if (!isNaN(deliveryDate.getTime()) && deliveryDate < endDate) {
+        endDate = deliveryDate;
+        labelStop = ' [Laudo Entregue]';
+      }
+    }
+    if (process.archivedDate) {
+      const archiveDate = new Date(process.archivedDate + 'T12:00:00');
+      if (!isNaN(archiveDate.getTime()) && archiveDate < endDate) {
+        endDate = archiveDate;
+        labelStop = ' [Processo Arquivado]';
+      }
+    }
+    const baseDate = new Date(baseDateStr + 'T12:00:00');
+    const diffDays = !isNaN(baseDate.getTime()) ? Math.ceil(Math.max(0, endDate - baseDate) / (1000 * 60 * 60 * 24)) : 0;
+    const jurosPct = Math.round((0.01 / 30) * diffDays * 100);
+    const corrPct = Math.round((Math.pow(1 + (Math.pow(1 + 0.0038, 1/30) - 1), diffDays) - 1) * 100);
+
+    honorariosCorrigidos = `${formatCurrency(corrigidoVal)} (${labelOrigem}${labelStop} | ${diffDays} dias | Juros: +${jurosPct}% | Corr: +${corrPct}%)`;
   } else if (info.honorariosUfesp) {
     // Para UFESP, a atualização é a própria conversão para o ano de 2026!
     const valorUfesp2026 = parseFloat(info.honorariosUfesp) * 39.85;
@@ -3570,31 +3610,49 @@ function formatCurrency(value) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
-function calculateUpdatedFees(value, baseDateStr, court) {
-  if (!value || isNaN(parseFloat(value))) return '-';
+function calculateUpdatedFees(value, baseDateStr, court, dataEntregaLaudo = null, archivedDate = null) {
+  if (!value || isNaN(parseFloat(value))) return 0;
   const val = parseFloat(value);
-  if (!baseDateStr) return formatCurrency(val) + ' (Sem data base)';
+  if (!baseDateStr) return val;
   
-  const baseDate = new Date(baseDateStr);
-  if (isNaN(baseDate.getTime())) return formatCurrency(val) + ' (Data inválida)';
+  const baseDate = new Date(baseDateStr + 'T12:00:00');
+  if (isNaN(baseDate.getTime())) return val;
   
-  const today = new Date();
-  if (baseDate > today) return formatCurrency(val);
+  let endDate = new Date();
   
-  const diffYears = today.getFullYear() - baseDate.getFullYear();
-  const diffMonths = (diffYears * 12) + (today.getMonth() - baseDate.getMonth());
+  if (dataEntregaLaudo) {
+    const deliveryDate = new Date(dataEntregaLaudo + 'T12:00:00');
+    if (!isNaN(deliveryDate.getTime()) && deliveryDate < endDate) {
+      endDate = deliveryDate;
+    }
+  }
   
-  // 1. Correção Monetária: TJSP usa Tabela Prática (IPCA-E/INPC), média histórica aprox. de 0.38% a.m.
-  const inflationRate = 0.0038;
-  const correctedVal = val * Math.pow(1 + inflationRate, Math.max(0, diffMonths));
+  if (archivedDate) {
+    const archiveDate = new Date(archivedDate + 'T12:00:00');
+    if (!isNaN(archiveDate.getTime()) && archiveDate < endDate) {
+      endDate = archiveDate;
+    }
+  }
+
+  if (baseDate >= endDate) return val;
   
-  // 2. Juros de Mora: regra geral simples de 1% ao mês (Art. 406 do CC / CPC)
-  const interestRate = 0.01 * Math.max(0, diffMonths);
-  const interestVal = val * interestRate;
+  // Calcular diferença exata em dias para atualização diária
+  const diffTime = Math.max(0, endDate - baseDate);
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  
+  // 1. Correção Monetária TJSP: Tabela Prática usa IPCA-E/INPC. 
+  // Média mensal histórica de ~0.38% a.m. equivale a uma taxa diária aproximada de:
+  // (1 + 0.0038)^(1/30) - 1 ≈ 0.000126435 (ou 0.0126435% ao dia)
+  const inflationRateDaily = Math.pow(1 + 0.0038, 1 / 30) - 1;
+  const correctedVal = val * Math.pow(1 + inflationRateDaily, diffDays);
+  
+  // 2. Juros de Mora: 1% ao mês simples (Art. 406 do CC / CPC)
+  // 1% ao mês equivale a 1/30 % ao dia = ~0.000333333 ao dia simples
+  const interestRateDaily = 0.01 / 30;
+  const interestVal = val * (interestRateDaily * diffDays);
   
   const totalUpdated = correctedVal + interestVal;
-  
-  return formatCurrency(totalUpdated) + ` (Juros: +${Math.round(interestRate*100)}% | Corr: +${Math.round((Math.pow(1+inflationRate, diffMonths)-1)*100)}%)`;
+  return totalUpdated;
 }
 
 // Renderiza o Painel Financeiro do Dashboard
@@ -3632,21 +3690,11 @@ async function renderFinanceDashboard() {
     const hasFees = info.honorarios && !isNaN(parseFloat(info.honorarios));
     const valBase = hasFees ? parseFloat(info.honorarios) : 0;
     
-    // Calcula valores corrigidos
+    // Calcula valores corrigidos usando a data do depósito/honorários
     let valUpdated = 0;
     if (valBase > 0) {
-      const baseDate = info.dataHonorarios ? new Date(info.dataHonorarios) : null;
-      if (baseDate && !isNaN(baseDate.getTime())) {
-        const today = new Date();
-        const diffYears = today.getFullYear() - baseDate.getFullYear();
-        const diffMonths = (diffYears * 12) + (today.getMonth() - baseDate.getMonth());
-        const inflationRate = 0.0038;
-        const corrected = valBase * Math.pow(1 + inflationRate, Math.max(0, diffMonths));
-        const interest = valBase * (0.01 * Math.max(0, diffMonths));
-        valUpdated = corrected + interest;
-      } else {
-        valUpdated = valBase;
-      }
+      const baseDateStr = info.dataDeposito || info.dataHonorarios || proc.dataAjuizamento || null;
+      valUpdated = calculateUpdatedFees(valBase, baseDateStr, proc.tribunal, info.dataEntregaLaudo, proc.archivedDate);
     }
     
     totalNominal += valBase;
@@ -4291,6 +4339,9 @@ function buildAIPrompt(proc) {
   if (expert.inversaoOnus) expertStr += `\n- Inversão do Ônus: ${expert.inversaoOnus}`;
   if (expert.honorarios) expertStr += `\n- Honorários: ${expert.honorarios}`;
   if (expert.depositoJudicial) expertStr += `\n- Depósito Judicial: ${expert.depositoJudicial}`;
+  if (expert.valorDeposito) expertStr += `\n- Valor do Depósito: ${expert.valorDeposito}`;
+  if (expert.dataDeposito) expertStr += `\n- Data do Depósito: ${expert.dataDeposito}`;
+  if (expert.dataEntregaLaudo) expertStr += `\n- Data Entrega do Laudo: ${expert.dataEntregaLaudo}`;
   if (expert.resumoProcesso) expertStr += `\n- Resumo do Processo: ${expert.resumoProcesso}`;
 
   // Limitado a 8000 caracteres para compatibilidade com os limites estritos de TPM do Groq
@@ -4299,14 +4350,17 @@ function buildAIPrompt(proc) {
   return `Você é um assistente jurídico especializado em direito processual civil brasileiro (CPC). Sua função é EXTRAIR dados do PDF do processo anexado abaixo.
 
 INSTRUÇÕES IMPORTANTES:
-- LEIA ATENTAMENTE TODO O TEXTO DO PDF extraído abaixo
-- Extraia o nome COMPLETO do autor/requerente e do réu/requerido
-- Identifique a classe processual exata (ex: "Procedimento Comum Cível", "Execução de Título Extrajudicial", etc.)
-- Identifique o assunto principal do processo
-- Identifique o órgão julgador (vara, comarca)
-- Analise as movimentações e datas mencionadas no PDF
-- Crie um resumo detalhado baseado no conteúdo do PDF
-- Se houver menção a perícia, crie tarefas pertinentes
+- LEIA ATENTAMENTE TODO O TEXTO DO PDF extraído abaixo. Busque de forma aprofundada por menções a perícia técnica, nomeação de peritos, decisões sobre ônus da prova, valores e datas de depósitos.
+- Extraia o nome COMPLETO do autor/requerente e do réu/requerido.
+- Identifique a classe processual exata e o assunto principal do processo.
+- Identifique o órgão julgador (vara, comarca).
+- Identifique se há um perito judicial nomeado ("perito").
+- Identifique se houve inversão do ônus da prova ("inversaoOnus").
+- Identifique o valor dos honorários periciais arbitrados ("honorarios").
+- Identifique se houve depósito judicial e se sim, qual o valor e a data correspondentes ("depositoJudicial", "valorDeposito", "dataDeposito").
+- Analise as movimentações e datas mencionadas no PDF.
+- Crie um resumo detalhado baseado no conteúdo do PDF.
+- Se houver menção a perícia, crie tarefas pertinentes.
 
 PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
 {
@@ -4316,7 +4370,13 @@ PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
     "reu": "nome completo do réu/requerido extraído do PDF (ou 'Não informado' se não encontrado)",
     "classe": "classe processual extraída do PDF (ou 'Não informada' se não encontrada)",
     "assunto": "assunto principal extraído do PDF (ou 'Não informado' se não encontrado)",
-    "orgao": "órgão julgador extraído do PDF (ou 'Não informado' se não encontrado)"
+    "orgao": "órgão julgador extraído do PDF (ou 'Não informado' se não encontrado)",
+    "perito": "nome completo do perito judicial nomeado extraído do PDF (ou 'Não nomeado' se não encontrado)",
+    "inversaoOnus": "indique se há decisão ou requerimento de inversão do ônus da prova: 'Sim', 'Não' ou 'Não informado'",
+    "honorarios": 3500.00,
+    "depositoJudicial": "indique se houve depósito judicial dos honorários: 'Sim', 'Não', 'Parcial' ou 'Não informado'",
+    "valorDeposito": 3500.00,
+    "dataDeposito": "data em que o depósito judicial foi realizado no formato AAAA-MM-DD ou null se não encontrado"
   },
   "tasks": [
     {
@@ -4330,7 +4390,7 @@ PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
 
 REGRAS:
 - PRIORIDADE MÁXIMA: Extraia os campos do TEXTO DO PDF abaixo. Leia o PDF com atenção.
-- Preencha "fields" APENAS com dados extraídos do PDF. Se o dado não estiver no PDF nem nos dados abaixo, use "Não informado".
+- Preencha "fields" APENAS com dados extraídos do PDF. Se o dado não estiver no PDF nem nos dados abaixo, use "Não informado" ou null.
 - Crie tarefas pertinentes ao perito judicial se houver menção a perícia no PDF.
 - Prazos típicos do CPC: art.465 (5 dias), art.466 (prazo para laudo), art.468 (15 dias para assistente técnico), art.477 (prazo para impugnação).
 - NÃO duplique tarefas existentes.
@@ -4619,6 +4679,18 @@ function applyAIFields(data) {
   if (isValid(f.autor)) activeProcess.expertInfo.autor = f.autor;
   if (isValid(f.reu)) activeProcess.expertInfo.reu = f.reu;
   if (isValid(f.perito)) activeProcess.expertInfo.perito = f.perito;
+  if (isValid(f.inversaoOnus)) activeProcess.expertInfo.inversaoOnus = f.inversaoOnus;
+  if (isValid(f.depositoJudicial)) activeProcess.expertInfo.depositoJudicial = f.depositoJudicial;
+  
+  if (f.honorarios !== undefined && f.honorarios !== null && !isNaN(parseFloat(f.honorarios))) {
+    activeProcess.expertInfo.honorarios = parseFloat(f.honorarios);
+  }
+  if (f.valorDeposito !== undefined && f.valorDeposito !== null && !isNaN(parseFloat(f.valorDeposito))) {
+    activeProcess.expertInfo.valorDeposito = parseFloat(f.valorDeposito);
+  }
+  if (f.dataDeposito) {
+    activeProcess.expertInfo.dataDeposito = f.dataDeposito;
+  }
 
   if (isValid(f.classe)) {
     if (!activeProcess.classe) activeProcess.classe = {};

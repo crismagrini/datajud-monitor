@@ -564,6 +564,10 @@
                 <span class="expert-label">Honorários Atualizados</span>
                 <span class="expert-value" style="color: var(--md-sys-color-primary); font-weight: 700;" id="expert-val-honorarios-corrigido">-</span>
               </div>
+              <div class="expert-item">
+                <span class="expert-label">Entrega do Laudo</span>
+                <span class="expert-value" id="expert-val-data-laudo">-</span>
+              </div>
             </div>
             
             <div class="expert-object-row">
@@ -636,6 +640,14 @@
               <div class="form-field-group">
                 <label for="edit-expert-data-deposito">Data do Depósito</label>
                 <input type="date" id="edit-expert-data-deposito">
+              </div>
+              <div class="form-field-group">
+                <label for="edit-expert-valor-deposito">Valor do Depósito (R$)</label>
+                <input type="number" step="0.01" id="edit-expert-valor-deposito" placeholder="Ex: 4000">
+              </div>
+              <div class="form-field-group">
+                <label for="edit-expert-data-laudo">Data de Entrega do Laudo</label>
+                <input type="date" id="edit-expert-data-laudo">
               </div>
               <div class="form-field-group">
                 <label for="edit-expert-data-honorarios">Data Fixação/Proposta</label>
