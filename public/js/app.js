@@ -2318,6 +2318,22 @@ async function renderDashboard(filterQuery = '') {
 async function openProcessDetails(process) {
   activeProcess = process;
 
+  // Garante que o modal sempre abra na aba "Resumo"
+  document.querySelectorAll('.dialog-tabs .tab-btn').forEach(btn => {
+    if (btn.getAttribute('data-modal-target') === 'tab-resumo') {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+  document.querySelectorAll('.modal-tab-content').forEach(content => {
+    if (content.id === 'tab-resumo') {
+      content.classList.add('active-tab');
+    } else {
+      content.classList.remove('active-tab');
+    }
+  });
+
   if (process.hasUpdate) {
     process.hasUpdate = false;
     await ProcessService.update(process);
