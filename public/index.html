@@ -3,1169 +3,1105 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Radar Perito - Monitoramento Processual</title>
+  <title>Radar Perito - Monitoramento e Análise de Processos com IA</title>
   
-  <!-- Fontes do Google (Material Style) -->
+  <!-- Fontes do Google -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   
   <!-- Ícones do Material Design 3 -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
-  
-  <!-- Estilos Globais -->
-  <link rel="stylesheet" href="css/style.css">
-  <!-- Biblioteca de PDF para divisão (split) local -->
-  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --bg-card: rgba(255, 255, 255, 0.03);
+      --bg-card-hover: rgba(255, 255, 255, 0.06);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --border-glow: rgba(124, 58, 237, 0.3);
+      --primary: #7c3aed;
+      --primary-hover: #6d28d9;
+      --secondary: #06b6d4;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --text-glow: rgba(124, 58, 237, 0.15);
+      --accent-gradient: linear-gradient(135deg, #7c3aed, #4f46e5);
+      --cyan-gradient: linear-gradient(135deg, #06b6d4, #3b82f6);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: 'Inter', sans-serif;
+      overflow-x: hidden;
+      line-height: 1.6;
+    }
+
+    h1, h2, h3, h4 {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 700;
+    }
+
+    /* Gradients de Fundo Decorativos */
+    .bg-decor {
+      position: absolute;
+      width: 600px;
+      height: 600px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(124, 58, 237, 0.15) 0%, rgba(9, 13, 22, 0) 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .decor-1 { top: -200px; right: -200px; }
+    .decor-2 { bottom: 20%; left: -300px; }
+
+    /* Header & Navegação */
+    header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(9, 13, 22, 0.7);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-color);
+      z-index: 100;
+      padding: 16px 5%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--text-main);
+      font-family: 'Outfit', sans-serif;
+      font-weight: 800;
+      font-size: 22px;
+      letter-spacing: -0.5px;
+    }
+
+    .logo span {
+      background: var(--accent-gradient);
+      color: white;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      box-shadow: 0 4px 15px rgba(124, 58, 237, 0.3);
+    }
+
+    .logo-text {
+      background: linear-gradient(135deg, #fff 40%, var(--text-muted) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 32px;
+      align-items: center;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 14px;
+      transition: color 0.3s ease;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-main);
+    }
+
+    .btn-header {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 10px 22px;
+      border-radius: 30px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 14px;
+      transition: all 0.3s ease;
+    }
+
+    .btn-header:hover {
+      background: var(--text-main);
+      color: var(--bg-dark);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 15px rgba(255, 255, 255, 0.1);
+    }
+
+    /* Hero Section */
+    .hero {
+      position: relative;
+      padding: 180px 5% 100px;
+      max-width: 1200px;
+      margin: 0 auto;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 1;
+    }
+
+    .badge-hero {
+      background: rgba(124, 58, 237, 0.1);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+      color: #a78bfa;
+      padding: 6px 16px;
+      border-radius: 30px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 24px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 4px 15px rgba(124, 58, 237, 0.05);
+      animation: float 3s ease-in-out infinite;
+    }
+
+    .hero h1 {
+      font-size: clamp(36px, 5vw, 68px);
+      line-height: 1.15;
+      letter-spacing: -2px;
+      margin-bottom: 24px;
+      background: linear-gradient(to right, #fff 30%, #a78bfa 70%, #06b6d4 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero p {
+      font-size: clamp(16px, 2vw, 20px);
+      color: var(--text-muted);
+      max-width: 780px;
+      margin-bottom: 40px;
+    }
+
+    .hero-ctas {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 80px;
+    }
+
+    .btn-primary {
+      background: var(--accent-gradient);
+      color: white;
+      border: none;
+      padding: 16px 36px;
+      border-radius: 30px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 10px 25px rgba(124, 58, 237, 0.4);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-3px) scale(1.02);
+      box-shadow: 0 15px 35px rgba(124, 58, 237, 0.5);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+      padding: 16px 36px;
+      border-radius: 30px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.3s ease;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.08);
+      transform: translateY(-2px);
+    }
+
+    /* Mockup do Dashboard */
+    .dashboard-mockup {
+      width: 100%;
+      max-width: 1000px;
+      background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%);
+      border: 1px solid var(--border-color);
+      border-radius: 20px;
+      padding: 8px;
+      box-shadow: 0 30px 100px rgba(0,0,0,0.8), 0 0 40px rgba(124, 58, 237, 0.1);
+      position: relative;
+    }
+
+    .mockup-header {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 12px 12px 0 0;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .mockup-dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .mockup-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.2);
+    }
+    .mockup-dot:nth-child(1) { background: #ff5f56; }
+    .mockup-dot:nth-child(2) { background: #ffbd2e; }
+    .mockup-dot:nth-child(3) { background: #27c93f; }
+
+    .mockup-bar {
+      margin-left: 20px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      padding: 4px 16px;
+      border-radius: 30px;
+      font-size: 11px;
+      color: var(--text-muted);
+      width: 250px;
+      text-align: left;
+    }
+
+    .mockup-content {
+      background: #0d121f;
+      border-radius: 0 0 12px 12px;
+      padding: 24px;
+      text-align: left;
+      height: 380px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Simulação de Interface Premium no Mockup */
+    .mockup-grid {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 20px;
+      height: 100%;
+    }
+
+    .mockup-sidebar {
+      border-right: 1px solid rgba(255,255,255,0.05);
+      padding-right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .sidebar-item {
+      height: 36px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      width: 100%;
+    }
+    .sidebar-item.active {
+      background: rgba(124, 58, 237, 0.15);
+      border-left: 3px solid var(--primary);
+    }
+
+    .mockup-main {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .mockup-card {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .mockup-title-shimmer {
+      height: 20px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+      width: 40%;
+      margin-bottom: 12px;
+    }
+
+    .mockup-line-shimmer {
+      height: 12px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 4px;
+      width: 80%;
+      margin-bottom: 8px;
+    }
+
+    .mockup-glow {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 300px;
+      height: 300px;
+      background: radial-gradient(circle, rgba(6, 182, 212, 0.15) 0%, rgba(0,0,0,0) 70%);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    /* Recursos / Features */
+    .features {
+      padding: 100px 5%;
+      max-width: 1200px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 60px;
+    }
+
+    .section-header h2 {
+      font-size: clamp(28px, 3.5vw, 42px);
+      margin-bottom: 16px;
+      letter-spacing: -1px;
+    }
+
+    .section-header p {
+      color: var(--text-muted);
+      font-size: 16px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 20px;
+      padding: 32px;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, rgba(124, 58, 237, 0.05) 0%, rgba(0,0,0,0) 100%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .feature-card:hover {
+      transform: translateY(-5px);
+      border-color: rgba(124, 58, 237, 0.3);
+      box-shadow: 0 20px 40px rgba(124, 58, 237, 0.05);
+    }
+
+    .feature-card:hover::before {
+      opacity: 1;
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(124, 58, 237, 0.1);
+      color: #a78bfa;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 15px rgba(124, 58, 237, 0.1);
+      position: relative;
+      z-index: 1;
+    }
+
+    .feature-card h3 {
+      font-size: 20px;
+      margin-bottom: 12px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .feature-card p {
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.6;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Seção de Planos / Pricing */
+    .pricing {
+      padding: 100px 5%;
+      max-width: 1200px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+    }
+
+    .pricing-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 48px;
+    }
+
+    .toggle-label {
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .toggle-label.active {
+      color: #a78bfa;
+      font-weight: 600;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 50px;
+      height: 26px;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: rgba(255,255,255,0.1);
+      transition: .3s;
+      border-radius: 34px;
+      border: 1px solid var(--border-color);
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .3s;
+      border-radius: 50%;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    }
+
+    input:checked + .slider {
+      background-color: var(--primary);
+    }
+
+    input:checked + .slider:before {
+      transform: translateX(24px);
+    }
+
+    .pricing-badge {
+      background: #06b6d4;
+      color: #022329;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 12px;
+    }
+
+    .pricing-cards {
+      display: flex;
+      gap: 32px;
+      justify-content: center;
+      flex-wrap: wrap;
+      align-items: stretch;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .pricing-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 24px;
+      padding: 40px;
+      flex: 1;
+      min-width: 290px;
+      max-width: 400px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .pricing-card.featured {
+      border-color: var(--primary);
+      box-shadow: 0 20px 50px rgba(124, 58, 237, 0.15);
+      background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(124, 58, 237, 0.02) 100%);
+    }
+
+    .pricing-card.featured::after {
+      content: 'Mais Popular / Melhor Custo-Benefício';
+      position: absolute;
+      top: -14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--accent-gradient);
+      color: white;
+      padding: 4px 16px;
+      border-radius: 30px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      box-shadow: 0 4px 15px rgba(124, 58, 237, 0.2);
+    }
+
+    .pricing-card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+    }
+
+    .pricing-card h3 {
+      font-size: 22px;
+      margin-bottom: 8px;
+    }
+
+    .pricing-card .desc {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+
+    .price-block {
+      margin-bottom: 32px;
+    }
+
+    .price-currency {
+      font-size: 20px;
+      font-weight: 700;
+      vertical-align: super;
+    }
+
+    .price-value {
+      font-size: 54px;
+      font-weight: 800;
+      font-family: 'Outfit', sans-serif;
+      letter-spacing: -2px;
+    }
+
+    .price-period {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-left: 4px;
+    }
+
+    .pricing-features {
+      list-style: none;
+      margin-bottom: 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .pricing-features li {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      color: var(--text-main);
+    }
+
+    .pricing-features li span.check {
+      color: #22c55e;
+      font-size: 20px;
+    }
+
+    .btn-pricing {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 16px;
+      border-radius: 30px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: all 0.3s ease;
+      margin-top: auto;
+    }
+
+    .pricing-card.featured .btn-pricing {
+      background: var(--accent-gradient);
+      color: white;
+      box-shadow: 0 10px 20px rgba(124, 58, 237, 0.2);
+    }
+
+    .pricing-card.featured .btn-pricing:hover {
+      box-shadow: 0 15px 30px rgba(124, 58, 237, 0.4);
+    }
+
+    .pricing-card:not(.featured) .btn-pricing {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border-color);
+      color: var(--text-main);
+    }
+
+    .pricing-card:not(.featured) .btn-pricing:hover {
+      background: rgba(255,255,255,0.1);
+    }
+
+    /* FAQ Section */
+    .faq {
+      padding: 100px 5%;
+      max-width: 800px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+    }
+
+    .faq-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .faq-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .faq-question {
+      padding: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    .faq-question span.arrow {
+      transition: transform 0.3s ease;
+      color: var(--text-muted);
+    }
+
+    .faq-answer {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s cubic-bezier(0, 1, 0, 1), padding 0.3s ease;
+      color: var(--text-muted);
+      font-size: 14px;
+      padding: 0 24px;
+    }
+
+    .faq-item.active {
+      border-color: rgba(124, 58, 237, 0.2);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .faq-item.active .faq-answer {
+      max-height: 500px; /* valor grande para permitir expansão */
+      padding: 0 24px 24px;
+      transition: max-height 0.3s cubic-bezier(0.99, 0.01, 1, 1), padding 0.3s ease;
+    }
+
+    .faq-item.active .faq-question span.arrow {
+      transform: rotate(180deg);
+      color: var(--primary);
+    }
+
+    /* CTA Final */
+    .cta-final {
+      padding: 120px 5%;
+      max-width: 1000px;
+      margin: 0 auto;
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+
+    .cta-container {
+      background: linear-gradient(135deg, rgba(124,58,237,0.1) 0%, rgba(6,182,212,0.05) 100%);
+      border: 1px solid var(--border-color);
+      border-radius: 30px;
+      padding: 60px 40px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+    }
+
+    .cta-container h2 {
+      font-size: clamp(28px, 4vw, 48px);
+      margin-bottom: 20px;
+    }
+
+    .cta-container p {
+      color: var(--text-muted);
+      font-size: 16px;
+      max-width: 600px;
+      margin: 0 auto 32px;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border-color);
+      padding: 60px 5% 40px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+      z-index: 1;
+      position: relative;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 24px;
+      justify-content: center;
+      margin-bottom: 24px;
+    }
+
+    .footer-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: color 0.3s ease;
+    }
+
+    .footer-links a:hover {
+      color: var(--text-main);
+    }
+
+    /* Animações */
+    @keyframes float {
+      0% { transform: translateY(0px); }
+      50% { transform: translateY(-6px); }
+      100% { transform: translateY(0px); }
+    }
+
+    @media (max-width: 768px) {
+      .nav-links {
+        display: none; /* Simplificado para telas menores */
+      }
+      .hero {
+        padding-top: 140px;
+      }
+    }
+  </style>
 </head>
 <body>
-  
-  <!-- Tela de Login e Cadastro (Bloqueio) -->
-  <div id="auth-screen" class="auth-screen">
-    <div class="auth-card">
-      <div class="auth-header">
-        <span class="material-symbols-rounded logo-icon">gavel</span>
-        <h1>Radar Perito</h1>
-        <p>Monitoramento e gestão de processos judiciais</p>
-      </div>
-      
-      <!-- Mensagens de Erro/Sucesso -->
-      <div id="auth-message-box" class="auth-message-box" style="display: none;">
-        <span id="auth-message-text"></span>
-      </div>
 
-      <!-- Formulário de Login -->
-      <form id="auth-login-form" class="auth-form">
-        <div class="form-field-group">
-          <label for="auth-email">E-mail</label>
-          <input type="email" id="auth-email" required placeholder="exemplo@email.com">
-        </div>
-        <div class="form-field-group" style="position: relative;">
-          <label for="auth-password">Senha</label>
-          <input type="password" id="auth-password" required placeholder="Digite sua senha">
-        </div>
-        
-        <button type="submit" class="md-btn md-btn-primary" style="width: 100%; justify-content: center; margin-top: 12px;" id="btn-submit-login">
-          Entrar
-        </button>
-        
-        <p class="auth-toggle-text" style="text-align: center; margin-top: 16px; font-size: 14px; color: var(--md-sys-color-on-surface-variant);">
-          Não tem uma conta? <a href="#" id="link-to-register" style="color: var(--md-sys-color-primary); font-weight: 500; text-decoration: none;">Cadastre-se</a>
-        </p>
-      </form>
+  <!-- Gradients de fundo decorativos -->
+  <div class="bg-decor decor-1"></div>
+  <div class="bg-decor decor-2"></div>
 
-      <!-- Formulário de Cadastro (Oculto por padrão) -->
-      <form id="auth-register-form" class="auth-form" style="display: none;">
-        <div class="form-field-group">
-          <label for="reg-email">E-mail</label>
-          <input type="email" id="reg-email" required placeholder="exemplo@email.com">
-        </div>
-        <div class="form-field-group">
-          <label for="reg-name">Nome Completo</label>
-          <input type="text" id="reg-name" required placeholder="Digite seu nome completo">
-        </div>
-        <div class="form-field-group">
-          <label for="reg-cpf">CPF</label>
-          <input type="text" id="reg-cpf" required placeholder="000.000.000-00" maxlength="14">
-        </div>
-        <div class="form-field-group">
-          <label for="reg-password">Senha</label>
-          <input type="password" id="reg-password" required minlength="6" placeholder="Mínimo 6 caracteres">
-        </div>
-        <div class="form-field-group" style="margin-bottom: 16px;">
-          <label for="reg-confirm-password">Confirmar Senha</label>
-          <input type="password" id="reg-confirm-password" required placeholder="Confirme sua senha">
-        </div>
-        
-        <button type="submit" class="md-btn md-btn-primary" style="width: 100%; justify-content: center;" id="btn-submit-register">
-          Criar Conta e Entrar
-        </button>
-        
-        <p class="auth-toggle-text" style="text-align: center; margin-top: 16px; font-size: 14px; color: var(--md-sys-color-on-surface-variant);">
-          Já tem uma conta? <a href="#" id="link-to-login" style="color: var(--md-sys-color-primary); font-weight: 500; text-decoration: none;">Fazer Login</a>
-        </p>
-      </form>
+  <!-- Header -->
+  <header>
+    <a href="#" class="logo">
+      <span class="material-symbols-rounded">radar</span>
+      <div class="logo-text">Radar Perito</div>
+    </a>
+    <nav>
+      <ul class="nav-links">
+        <li><a href="#features">Recursos</a></li>
+        <li><a href="#pricing">Preços</a></li>
+        <li><a href="#faq">Dúvidas</a></li>
+        <li><a href="/app" class="btn-header">Acessar Sistema</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="badge-hero">
+      <span class="material-symbols-rounded">bolt</span> Tecnologia Inteligente de IA
     </div>
-  </div>
-
-  <!-- Tela de Verificação de E-mail (Código de Ativação) -->
-  <div id="email-verification-screen" class="auth-screen" style="display: none;">
-    <div class="auth-card">
-      <div class="auth-header">
-        <span class="material-symbols-rounded logo-icon" style="background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-tertiary);">mark_email_unread</span>
-        <h1>Verifique seu E-mail</h1>
-        <p>Enviamos um código de ativação com 6 dígitos para o seu e-mail cadastrado.</p>
-      </div>
-
-      <!-- Alerta simulado de código de teste -->
-      <div id="verification-mock-alert" class="settings-warning-box" style="margin-bottom: 16px; background-color: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border: 1px solid var(--md-sys-color-secondary); display: none; align-items: flex-start; gap: 12px; padding: 12px; border-radius: 8px;">
-        <span class="material-symbols-rounded" style="color: var(--md-sys-color-secondary);">info</span>
-        <div>
-          <strong style="display: block; font-size: 13px;">[Simulador de E-mail]</strong>
-          <span style="font-size: 12px;" id="verification-mock-code-text">Seu código gerado é: ------</span>
-        </div>
-      </div>
-
-      <div id="verification-error-box" class="auth-message-box" style="display: none; background-color: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); border: 1px solid var(--md-sys-color-error); margin-bottom: 16px;">
-        <span id="verification-error-text"></span>
-      </div>
-
-      <form id="email-verification-form" class="auth-form">
-        <div class="form-field-group">
-          <label for="verification-code" style="font-weight: 600;">Código de Ativação (6 dígitos)</label>
-          <input type="text" id="verification-code" required placeholder="Digite o código" maxlength="6" style="text-align: center; font-size: 20px; letter-spacing: 4px; font-weight: 700;">
-        </div>
-
-        <button type="submit" class="md-btn md-btn-primary" style="width: 100%; justify-content: center; margin-top: 12px;" id="btn-submit-verification">
-          Confirmar e Ativar Conta
-        </button>
-
-        <p class="auth-toggle-text" style="text-align: center; margin-top: 16px; font-size: 14px; color: var(--md-sys-color-on-surface-variant);">
-          Quer sair e entrar com outra conta? <a href="#" id="link-verification-logout" style="color: var(--md-sys-color-error); font-weight: 500; text-decoration: none;">Sair da Conta</a>
-        </p>
-      </form>
-    </div>
-  </div>
-
-  <!-- App Container (M3 Centralized Layout) -->
-  <div class="app-container">
+    <h1>O Monitoramento Processual Inteligente para Peritos Judiciais</h1>
+    <p>Acompanhe intimações do TJSP, extraia a ficha técnica do processo automaticamente com IA, configure alarmes CPC de prazos e atualize seus honorários monetariamente em tempo real.</p>
     
-    <!-- Cabeçalho Principal M3 Header Bar -->
-    <header class="app-header">
-      <div class="header-brand">
-        <span class="material-symbols-rounded brand-icon">gavel</span>
-        <div class="brand-text">
-          <h1>Radar Perito</h1>
-          <p>Acompanhamento processual inteligente</p>
-        </div>
-      </div>
-      
-      <div class="header-actions" style="display: flex; align-items: center; gap: 8px;">
-        <span class="user-greeting" id="user-display-email" style="font-size: 13px; font-weight: 500; color: var(--md-sys-color-on-surface-variant); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></span>
-        <button class="md-btn-icon" id="btn-open-settings" title="Configurações">
-          <span class="material-symbols-rounded">settings</span>
-        </button>
-        <button class="md-btn-icon" id="btn-logout" title="Sair (Logout)" style="color: var(--md-sys-color-error);">
-          <span class="material-symbols-rounded">logout</span>
-        </button>
-      </div>
-    </header>
-    
-    <!-- Área de Conteúdo Principal (Única Tela) -->
-    <main class="main-content">
-      
-      <!-- Cards de Estatísticas Rápidas (M3 Cards) -->
-      <div class="metrics-grid">
-        <div class="metrics-card">
-          <span class="material-symbols-rounded card-icon" style="color: var(--md-sys-color-primary);">folder_open</span>
-          <div class="card-info">
-            <span class="card-label">Monitorados</span>
-            <h3 id="stat-total">0</h3>
-          </div>
-        </div>
-        <div class="metrics-card">
-          <span class="material-symbols-rounded card-icon" style="color: var(--md-sys-color-success);">notifications_active</span>
-          <div class="card-info">
-            <span class="card-label">Atualizados</span>
-            <h3 id="stat-updated">0</h3>
-          </div>
-        </div>
-        <div class="metrics-card" id="card-tasks-overdue">
-          <span class="material-symbols-rounded card-icon" style="color: var(--md-sys-color-error);">assignment_late</span>
-          <div class="card-info">
-            <span class="card-label">Tarefas Atrasadas</span>
-            <h3 id="stat-overdue-tasks" style="font-weight: 700;">0</h3>
-          </div>
-        </div>
-      </div>
-      
-      <!-- Abas Principais do Dashboard (M3 Tabs Style) -->
-      <div class="dashboard-tabs">
-        <button class="dash-tab-btn active" id="btn-dash-tab-processes">
-          <span class="material-symbols-rounded">folder_open</span>
-          <span>Processos Monitorados</span>
-        </button>
-        <button class="dash-tab-btn" id="btn-dash-tab-finance">
-          <span class="material-symbols-rounded">payments</span>
-          <span>Painel Financeiro</span>
-        </button>
-        <button class="dash-tab-btn" id="btn-dash-tab-tasks">
-          <span class="material-symbols-rounded">playlist_add_check</span>
-          <span>Minhas Tarefas</span>
-          <span class="tab-badge" id="badge-overdue-tasks-count" style="display: none; background-color: var(--md-sys-color-error); color: var(--md-sys-color-on-error); border-radius: 8px; padding: 2px 6px; font-size: 10px; font-weight: 700; margin-left: 4px;">0</span>
-        </button>
-        <button class="dash-tab-btn" id="btn-dash-tab-radar">
-          <span class="material-symbols-rounded">radar</span>
-          <span>Radar de Nomeações</span>
-          <span class="tab-badge" id="badge-radar-count" style="display: none; background-color: var(--md-sys-color-tertiary); color: var(--md-sys-color-on-tertiary); border-radius: 8px; padding: 2px 6px; font-size: 10px; font-weight: 700; margin-left: 4px;">0</span>
-        </button>
-      </div>
+    <div class="hero-ctas">
+      <a href="/app" class="btn-primary">
+        Começar Agora <span class="material-symbols-rounded">arrow_forward</span>
+      </a>
+      <a href="#features" class="btn-secondary">
+        Ver Recursos
+      </a>
+    </div>
 
-      <!-- Seção 1: Processos Monitorados -->
-      <div class="dashboard-section" id="section-dash-processes">
-        <!-- Filtro e Lista de Processos -->
-        <div class="process-section">
-          <div class="section-header" style="flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <div style="display: flex; align-items: center; gap: 16px;">
-              <h2 style="margin: 0;">Seus Processos</h2>
-              <button class="md-btn md-btn-primary" id="btn-add-process-header" style="gap: 8px; height: 40px; padding: 0 16px; border-radius: 8px;">
-                <span class="material-symbols-rounded">add</span>
-                <span>Cadastrar Processo</span>
-              </button>
-            </div>
-            <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
-              <div class="search-box">
-                <span class="material-symbols-rounded search-icon">search</span>
-                <input type="text" id="filter-monitored" placeholder="Filtrar por número, tribunal ou parte...">
-              </div>
-              <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--md-sys-color-on-surface-variant);">
-                <input type="checkbox" id="toggle-show-archived" style="accent-color: var(--md-sys-color-primary); cursor: pointer; width: 16px; height: 16px;">
-                <span>Exibir Arquivados</span>
-              </label>
-            </div>
-          </div>
-          
-          <!-- Grid de Cards de Processos -->
-          <div class="process-grid" id="process-list-container">
-            <!-- Cards serão inseridos aqui dinamicamente -->
-          </div>
-          
-          <!-- Estado Vazio (Fora do container para não ser limpo pelo JS) -->
-          <div class="empty-state" id="empty-state-monitored" style="display: none;">
-            <span class="material-symbols-rounded empty-icon">assignment_late</span>
-            <h3>Nenhum processo cadastrado</h3>
-            <p>Clique no botão abaixo para adicionar o primeiro processo usando o número CNJ.</p>
-            <button class="md-btn md-btn-primary" id="btn-empty-add">
-              <span class="material-symbols-rounded">add</span>
-              <span>Cadastrar Processo</span>
-            </button>
-          </div>
+    <!-- Simulação do Dashboard -->
+    <div class="dashboard-mockup">
+      <div class="mockup-header">
+        <div class="mockup-dots">
+          <div class="mockup-dot"></div>
+          <div class="mockup-dot"></div>
+          <div class="mockup-dot"></div>
         </div>
+        <div class="mockup-bar">https://radarperito.com.br/app</div>
       </div>
-
-      <!-- Seção 2: Painel Financeiro -->
-      <div class="dashboard-section" id="section-dash-finance" style="display: none;">
-        <!-- Cards de Resumo Financeiro -->
-        <div class="finance-metrics-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
-          <div class="metrics-card" style="background-color: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container);">
-            <span class="material-symbols-rounded card-icon">payments</span>
-            <div class="card-info">
-              <span class="card-label">Total Arbitrado/Proposto</span>
-              <h3 id="finance-total-nominal">R$ 0,00</h3>
-            </div>
+      <div class="mockup-content">
+        <div class="mockup-glow"></div>
+        <div class="mockup-grid">
+          <div class="mockup-sidebar">
+            <div class="sidebar-item active"></div>
+            <div class="sidebar-item" style="width: 80%;"></div>
+            <div class="sidebar-item" style="width: 70%;"></div>
+            <div class="sidebar-item" style="width: 90%;"></div>
           </div>
-          <div class="metrics-card" style="background-color: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container);">
-            <span class="material-symbols-rounded card-icon">trending_up</span>
-            <div class="card-info">
-              <span class="card-label">Total Corrigido + Juros</span>
-              <h3 id="finance-total-updated">R$ 0,00</h3>
+          <div class="mockup-main">
+            <div class="mockup-card">
+              <div class="mockup-title-shimmer" style="width: 30%;"></div>
+              <div class="mockup-line-shimmer"></div>
+              <div class="mockup-line-shimmer" style="width: 60%;"></div>
             </div>
-          </div>
-          <div class="metrics-card" style="background-color: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container);">
-            <span class="material-symbols-rounded card-icon">check_circle</span>
-            <div class="card-info">
-              <span class="card-label">Total Garantido (Depositado)</span>
-              <h3 id="finance-total-deposited">R$ 0,00</h3>
+            <div class="mockup-card">
+              <div class="mockup-title-shimmer" style="width: 45%;"></div>
+              <div class="mockup-line-shimmer"></div>
+              <div class="mockup-line-shimmer" style="width: 75%;"></div>
             </div>
           </div>
         </div>
-
-        <!-- Tabela de Detalhes Financeiros por Ação -->
-        <div class="process-section">
-          <div class="section-header">
-            <h2>Detalhamento Financeiro por Ação</h2>
-          </div>
-          
-          <div class="finance-table-container" style="overflow-x: auto; background: var(--md-sys-color-surface-container); border-radius: 16px; border: 1px solid var(--md-sys-color-outline-variant); margin-top: 12px;">
-            <table class="finance-table" style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
-              <thead>
-                <tr style="border-bottom: 1px solid var(--md-sys-color-outline-variant); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant);">
-                  <th style="padding: 16px; font-weight: 600;">Processo</th>
-                  <th style="padding: 16px; font-weight: 600;">Tribunal</th>
-                  <th style="padding: 16px; font-weight: 600;">Honorários Base</th>
-                  <th style="padding: 16px; font-weight: 600;">Valor Atualizado</th>
-                  <th style="padding: 16px; font-weight: 600;">Depósito Judicial</th>
-                  <th style="padding: 16px; font-weight: 600; text-align: right;">Ações</th>
-                </tr>
-              </thead>
-              <tbody id="finance-table-rows">
-                <!-- Inserido dinamicamente via JS -->
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <!-- Seção 3: Área de Tarefas (Oculta por padrão) -->
-      <div class="dashboard-section" id="section-dash-tasks" style="display: none;">
-        <div class="process-section">
-          <div class="section-header" style="margin-bottom: 16px; flex-wrap: wrap; gap: 12px; justify-content: space-between;">
-            <h2>📋 Minhas Tarefas e Prazos</h2>
-            <button class="md-btn md-btn-primary" id="btn-dash-add-task">
-              <span class="material-symbols-rounded">add</span>
-              <span>Nova Tarefa</span>
-            </button>
-          </div>
-          <p class="settings-desc" style="margin-top: -8px; margin-bottom: 16px;">Lista consolidada de prazos processuais e compromissos de todos os seus processos monitorados ativos.</p>
-          
-          <div class="tasks-filters" style="display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;">
-            <button class="md-btn md-btn-compact active" id="btn-filter-tasks-all" onclick="filterGlobalTasks('all')">Todas</button>
-            <button class="md-btn md-btn-compact" id="btn-filter-tasks-pending" onclick="filterGlobalTasks('pending')">Pendentes</button>
-            <button class="md-btn md-btn-compact" id="btn-filter-tasks-overdue" style="color: var(--md-sys-color-error);" onclick="filterGlobalTasks('overdue')">Atrasadas ⚠️</button>
-            <button class="md-btn md-btn-compact" id="btn-filter-tasks-completed" onclick="filterGlobalTasks('completed')">Concluídas</button>
-          </div>
-
-          <div class="tasks-dashboard-list" id="tasks-dashboard-container" style="display: flex; flex-direction: column; gap: 12px;">
-            <!-- Tarefas serão inseridas aqui dinamicamente -->
-          </div>
-        </div>
-      </div>
-
-      <!-- Seção 4: Radar de Nomeações (Oculta por padrão) -->
-      <div class="dashboard-section" id="section-dash-radar" style="display: none;">
-        <div class="process-section">
-          <div class="section-header" style="margin-bottom: 16px; flex-wrap: wrap; gap: 12px; justify-content: space-between;">
-            <h2>Radar de Nomeações Judiciais</h2>
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <span id="radar-last-scan-label" style="font-size: 11px; color: var(--md-sys-color-outline); font-weight: 500;"></span>
-              <button class="md-btn md-btn-primary" id="btn-radar-scan">
-                <span class="material-symbols-rounded" id="radar-scan-icon">radar</span>
-                <span id="radar-scan-text">Buscar Nomeações</span>
-              </button>
-            </div>
-          </div>
-          <p class="settings-desc" style="margin-top: -8px; margin-bottom: 16px;">
-            Varredura nos tribunais do Datajud em busca de processos com nomeações judiciais vinculadas ao seu nome e CPF. A busca é feita em tempo real na base oficial do CNJ.
-          </p>
-
-          <div id="radar-scan-status" style="display: none; margin-bottom: 16px; padding: 12px 16px; border-radius: 8px; background-color: var(--md-sys-color-surface-variant); border: 1px solid var(--md-sys-color-outline-variant); align-items: center; gap: 12px;">
-            <span class="material-symbols-rounded spinning" id="radar-scan-spinner" style="color: var(--md-sys-color-primary);">sync</span>
-            <div>
-              <div id="radar-scan-status-text" style="font-size: 13px; font-weight: 600;">Vasculhando tribunais no Datajud...</div>
-              <div id="radar-scan-details" style="font-size: 11px; color: var(--md-sys-color-on-surface-variant); margin-top: 2px;"></div>
-            </div>
-          </div>
-
-          <div id="radar-notifications-list" style="display: flex; flex-direction: column; gap: 16px; margin-top: 16px;">
-            <!-- Nomeações inseridas dinamicamente pelo JS -->
-          </div>
-        </div>
-      </div>
-      
-    </main>
-    
-    <!-- Floating Action Button (FAB M3) - Ocultado para focar no botão central e do cabeçalho -->
-    <button class="md-fab" id="btn-add-process-fab" title="Cadastrar novo processo" style="display: none !important;">
-      <span class="material-symbols-rounded">add</span>
-      <span>Cadastrar Processo</span>
-    </button>
-    
-  </div>
-  
-  <!-- ==========================================
-       MODAIS (DIALOGS MATERIAL DESIGN 3)
-       ========================================== -->
-  
-  <!-- MODAL 1: Cadastrar Processo -->
-  <div class="md-dialog-overlay" id="register-process-dialog">
-    <div class="md-dialog">
-      <div class="dialog-header">
-        <div class="dialog-title-group">
-          <span class="material-symbols-rounded dialog-header-icon">add_card</span>
-          <h3>Cadastrar Processo</h3>
-        </div>
-        <button class="close-dialog-btn" onclick="closeDialog('register-process-dialog')">
-          <span class="material-symbols-rounded">close</span>
-        </button>
-      </div>
-      
-      <div class="dialog-content">
-        <p class="dialog-description">Insira o número único do processo (padrão CNJ) para buscar no Datajud e monitorá-lo.</p>
-        
-        <!-- Campo de Entrada do CNJ -->
-        <div class="md-text-field">
-          <span class="material-symbols-rounded field-icon">numbers</span>
-          <input type="text" id="reg-process-number" placeholder="0000000-00.0000.0.00.0000" maxlength="25">
-        </div>
-        
-        <!-- Toggle: Busca Automática -->
-        <div class="form-row-toggle">
-          <div class="toggle-info">
-            <span class="toggle-title">Busca automática no Datajud</span>
-            <span class="toggle-desc">Consulta os dados direto na base do CNJ</span>
-          </div>
-          <label class="md-switch">
-            <input type="checkbox" id="reg-auto-search" checked>
-            <span class="switch-slider"></span>
-          </label>
-        </div>
-        
-        <!-- Formulário Manual (Oculto por padrão, expandido sob demanda) -->
-        <div class="manual-form-container" id="manual-form-container" style="display: none;">
-          <div class="form-divider"></div>
-          <h4>Dados Processuais (Manual)</h4>
-          
-          <div class="form-grid">
-            <div class="form-field-group">
-              <label for="reg-manual-court">Tribunal</label>
-              <select id="reg-manual-court">
-                <!-- Injetado dinamicamente pelo JS -->
-              </select>
-            </div>
-            
-            <div class="form-field-group">
-              <label for="reg-manual-orgao">Órgão Julgador</label>
-              <input type="text" id="reg-manual-orgao" placeholder="Ex: 2ª Vara Cível">
-            </div>
-            
-            <div class="form-field-group">
-              <label for="reg-manual-class">Classe Processual</label>
-              <input type="text" id="reg-manual-class" placeholder="Ex: Procedimento Comum Cível">
-            </div>
-            
-            <div class="form-field-group">
-              <label for="reg-manual-subject">Assunto Principal</label>
-              <input type="text" id="reg-manual-subject" placeholder="Ex: Dano Moral">
-            </div>
-            
-            <div class="form-field-group">
-              <label for="reg-manual-autor">Requerente (Polo Ativo)</label>
-              <input type="text" id="reg-manual-autor" placeholder="Nome do Requerente">
-            </div>
-            
-            <div class="form-field-group">
-              <label for="reg-manual-reu">Requerido (Polo Passivo)</label>
-              <input type="text" id="reg-manual-reu" placeholder="Nome do Requerido">
-            </div>
-          </div>
-          
-          <div class="form-field-group" style="margin-top: 12px;">
-            <label for="reg-manual-last-mov">Última Movimentação (Histórico)</label>
-            <input type="text" id="reg-manual-last-mov" placeholder="Ex: Distribuído por sorteio.">
-          </div>
-        </div>
-      </div>
-      
-      <div class="dialog-footer">
-        <button class="md-btn md-btn-text" onclick="closeDialog('register-process-dialog')">Cancelar</button>
-        <button class="md-btn md-btn-primary" id="btn-confirm-register">
-          <span class="material-symbols-rounded">bookmark</span>
-          <span>Cadastrar</span>
-        </button>
       </div>
     </div>
-  </div>
-  
-  <!-- MODAL 2: Detalhes do Processo -->
-  <div class="md-dialog-overlay" id="process-detail-dialog">
-    <div class="md-dialog dialog-large">
-      <div class="dialog-header">
-        <div class="dialog-title-group" style="flex-wrap: wrap; gap: 8px; align-items: center;">
-          <span class="dialog-court-badge" id="modal-court-badge">TJSP</span>
-          <h3 id="modal-process-number" style="margin: 0;">0000000-00.0000.0.00.0000</h3>
-          <span id="modal-last-checked-label" style="font-size: 11px; color: var(--md-sys-color-outline); font-weight: 500; margin-left: 4px; align-self: center;"></span>
-          <button class="md-btn md-btn-tonal md-btn-compact" id="btn-sync-process-now" style="margin-left: 8px; gap: 4px; font-size: 12px; height: 32px;" title="Buscar atualizações no Datajud agora">
-            <span class="material-symbols-rounded" style="font-size: 16px;">sync</span>
-            <span>Sincronizar</span>
-          </button>
+  </section>
+
+  <!-- Seção de Recursos -->
+  <section class="features" id="features">
+    <div class="section-header">
+      <h2>Criado de Perito para Perito</h2>
+      <p>Esqueça a checagem diária manual e planilhas confusas. Tenha o controle total dos seus processos.</p>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">
+          <span class="material-symbols-rounded">notifications_active</span>
         </div>
-        <button class="close-dialog-btn" onclick="closeDialog('process-detail-dialog')">
-          <span class="material-symbols-rounded">close</span>
-        </button>
+        <h3>Alertas Automáticos</h3>
+        <p>Receba avisos instantâneos sempre que houver novas movimentações nos processos que você monitora no Datajud.</p>
       </div>
-      
-      <div class="dialog-content">
-        <!-- Navegação interna por abas (M3 Segmented / Tabs) -->        <div class="dialog-tabs">
-          <button class="tab-btn active" data-modal-target="tab-resumo">
-            <span class="material-symbols-rounded">info</span>
-            <span>Resumo</span>
-          </button>
-          <button class="tab-btn" data-modal-target="tab-ai-analysis" id="tab-btn-ai-analysis">
-            <span class="material-symbols-rounded">smart_toy</span>
-            <span>Análise IA</span>
-          </button>
-          <button class="tab-btn" data-modal-target="tab-movimentos">
-            <span class="material-symbols-rounded">history</span>
-            <span>Histórico</span>
-            <span class="tab-badge" id="modal-mov-count">0</span>
-          </button>
-          <button class="tab-btn" data-modal-target="tab-agenda-tarefas" id="tab-btn-agenda">
-            <span class="material-symbols-rounded">calendar_today</span>
-            <span>Agenda e Tarefas</span>
-          </button>
-        </div>
 
-        
-        <!-- Tab 1: Resumo -->
-        <div class="modal-tab-content active-tab" id="tab-resumo">
-          <div class="info-grid">
-            <div class="info-item">
-              <span class="info-label">Classe Processual</span>
-              <span class="info-value" id="modal-classe">-</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">Assunto Principal</span>
-              <span class="info-value" id="modal-assunto">-</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">Órgão Julgador</span>
-              <span class="info-value" id="modal-orgao">-</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">Ajuizamento</span>
-              <span class="info-value" id="modal-data-ajuizamento">-</span>
-            </div>
-          </div>
-          
-          <!-- Ficha Técnica do Expert (Perícia) -->
-          <div class="expert-info-card" id="expert-info-card" style="display: none;">
-            <div class="expert-card-header">
-              <span class="material-symbols-rounded text-primary">assignment_ind</span>
-              <span>Ficha Técnica do Expert</span>
-              <button class="md-btn-icon" id="btn-edit-expert-info" title="Editar Ficha Técnica">
-                <span class="material-symbols-rounded">edit</span>
-              </button>
-            </div>
-            
-            <div class="expert-grid">
-              <div class="expert-item">
-                <span class="expert-label">Requerente</span>
-                <span class="expert-value" id="expert-val-autor">-</span>
-              </div>
-              <div class="expert-item">
-                <span class="expert-label">Requerido</span>
-                <span class="expert-value" id="expert-val-reu">-</span>
-              </div>
-              <div class="expert-item">
-                <span class="expert-label">Perito Nomeado</span>
-                <span class="expert-value" id="expert-val-perito">-</span>
-              </div>
-              <div class="expert-item">
-                <span class="expert-label">Justiça Gratuita?</span>
-                <span class="expert-value" id="expert-val-jg">-</span>
-              </div>
-              <div class="expert-item">
-                <span class="expert-label">Comarca (Cidade/UF)</span>
-                <span class="expert-value" id="expert-val-comarca">-</span>
-              </div>
-              <div class="expert-item">
-                <span class="expert-label">Inversão do Ônus?</span>
-                <span class="expert-value" id="expert-val-inversao">-</span>
-              </div>
-              <div class="expert-item">
-                <span class="expert-label">Honorários (Base)</span>
-                <span class="expert-value" id="expert-val-honorarios">-</span>
-              </div>
-              <div class="expert-item">
-                <span class="expert-label">Depósito Judicial?</span>
-                <span class="expert-value" id="expert-val-deposito">-</span>
-              </div>
-              <div class="expert-item">
-                <span class="expert-label">Honorários Atualizados</span>
-                <span class="expert-value" style="color: var(--md-sys-color-primary); font-weight: 700;" id="expert-val-honorarios-corrigido">-</span>
-              </div>
-              <div class="expert-item">
-                <span class="expert-label">Entrega do Laudo</span>
-                <span class="expert-value" id="expert-val-data-laudo">-</span>
-              </div>
-            </div>
-            
-            <div class="expert-object-row">
-              <span class="expert-label">Objeto da Perícia</span>
-              <span class="expert-value" id="expert-val-objeto">-</span>
-            </div>
-            
-            <div class="expert-object-row" style="margin-top: 8px;">
-              <span class="expert-label">Resumo do Processo (Nomeação e Honorários)</span>
-              <span class="expert-value" id="expert-val-resumo">-</span>
-            </div>
-          </div>
-          
-          <!-- Formulário Inline de Edição da Ficha (Oculto por padrão) -->
-          <div class="expert-info-edit" id="expert-info-edit" style="display: none;">
-            <div class="edit-header">
-              <h4>Editar Ficha Técnica</h4>
-            </div>
-            <div class="edit-grid">
-              <div class="form-field-group">
-                <label for="edit-expert-autor">Requerente</label>
-                <input type="text" id="edit-expert-autor">
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-reu">Requerido</label>
-                <input type="text" id="edit-expert-reu">
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-perito">Perito Nomeado</label>
-                <input type="text" id="edit-expert-perito">
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-jg">Justiça Gratuita</label>
-                <select id="edit-expert-jg">
-                  <option value="Sim">Sim</option>
-                  <option value="Não">Não</option>
-                  <option value="Não informado">Não informado</option>
-                </select>
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-comarca">Comarca (Cidade/UF)</label>
-                <input type="text" id="edit-expert-comarca">
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-inversao">Inversão do Ônus?</label>
-                <select id="edit-expert-inversao">
-                  <option value="Sim">Sim</option>
-                  <option value="Não">Não</option>
-                  <option value="Não informado">Não informado</option>
-                </select>
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-honorarios">Honorários (R$)</label>
-                <input type="number" step="0.01" id="edit-expert-honorarios" placeholder="Ex: 4000">
-                <p class="field-help" style="font-size: 11px; margin-top: 4px; color: var(--md-sys-color-outline); line-height: 1.3;">Nota: Se pago pela Defensoria Pública (Justiça Gratuita), preencha o valor manualmente conforme a tabela do convênio.</p>
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-honorarios-ufesp">Honorários (UFESPs)</label>
-                <input type="number" step="0.01" id="edit-expert-honorarios-ufesp" placeholder="Ex: 15">
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-deposito">Depósito Realizado?</label>
-                <select id="edit-expert-deposito">
-                  <option value="Sim">Sim</option>
-                  <option value="Não">Não</option>
-                  <option value="Parcial">Parcial</option>
-                  <option value="Não informado">Não informado</option>
-                </select>
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-data-deposito">Data do Depósito</label>
-                <input type="date" id="edit-expert-data-deposito">
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-valor-deposito">Valor do Depósito (R$)</label>
-                <input type="number" step="0.01" id="edit-expert-valor-deposito" placeholder="Ex: 4000">
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-data-laudo">Data de Entrega do Laudo</label>
-                <input type="date" id="edit-expert-data-laudo">
-              </div>
-              <div class="form-field-group">
-                <label for="edit-expert-data-honorarios">Data Fixação/Proposta</label>
-                <input type="date" id="edit-expert-data-honorarios">
-              </div>
-            </div>
-            <div class="form-field-group" style="margin-top: 8px;">
-              <label for="edit-expert-objeto">Objeto da Perícia</label>
-              <input type="text" id="edit-expert-objeto" placeholder="Ex: Apuração de nexo causal em erro médico">
-            </div>
-            <div class="form-field-group" style="margin-top: 8px;">
-              <label for="edit-expert-resumo">Resumo do Processo (Nomeação e Honorários)</label>
-              <textarea id="edit-expert-resumo" placeholder="Ex: Perito nomeado. Proposta de honorários de R$ 4.000,00 homologada pelo juiz." style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); resize: vertical; min-height: 60px; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);"></textarea>
-            </div>
-            <div class="edit-actions" style="margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px;">
-              <button class="md-btn md-btn-text" id="btn-cancel-expert-edit">Cancelar</button>
-              <button class="md-btn md-btn-primary" id="btn-save-expert-edit">Salvar</button>
-            </div>
-          </div>
-          
-          <div class="parties-container">
-            <h4>Partes Envolvidas</h4>
-            <div class="parties-grid">
-              <div class="party-block">
-                <span class="party-role role-active">Polo Ativo (Requerente)</span>
-                <div class="party-list" id="modal-polo-ativo">
-                  <!-- Injetado dinamicamente -->
-                </div>
-              </div>
-              <div class="party-block">
-                <span class="party-role role-passive">Polo Passivo (Requerido)</span>
-                <div class="party-list" id="modal-polo-passivo">
-                  <!-- Injetado dinamicamente -->
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <div class="last-movement-highlight">
-            <div class="highlight-header">
-              <span class="material-symbols-rounded">sync_alt</span>
-              <span>Último Andamento</span>
-            </div>
-            <p id="modal-last-movement-desc">-</p>
-            <span class="highlight-date" id="modal-last-movement-date">-</span>
-          </div>
-          
-          <!-- Gerenciamento de Arquivo PDF (Perito) -->
-          <div class="pdf-management-container">
-            <div class="pdf-header">
-              <span class="material-symbols-rounded text-primary">picture_as_pdf</span>
-              <h4>Cópia Integral do Processo (PDF)</h4>
-            </div>
-            
-            <!-- Estado 1: Sem PDF -->
-            <div class="pdf-status-empty" id="pdf-status-empty">
-              <p>Anexe a cópia integral em PDF do processo para consulta e referência na ficha técnica.</p>
-              <button class="md-btn md-btn-tonal" id="btn-upload-pdf-trigger" style="margin-top: 8px;">
-                <span class="material-symbols-rounded">upload_file</span>
-                <span>Anexar Cópia em PDF</span>
-              </button>
-            </div>
-            
-            <!-- Estado 2: Com PDF -->
-            <div class="pdf-status-active" id="pdf-status-active" style="display: none;">
-              <div class="pdf-file-card">
-                <span class="material-symbols-rounded file-pdf-icon">description</span>
-                <div class="pdf-file-info">
-                  <span class="pdf-filename" id="pdf-info-filename">processo.pdf</span>
-                  <span class="pdf-filesize" id="pdf-info-details">Tamanho: 0 KB | 0 páginas</span>
-                </div>
-                <div style="display: flex; gap: 4px;">
-                  <button class="md-btn-icon" id="btn-download-supabase-pdf" title="Baixar arquivo PDF da nuvem" style="display: none;">
-                    <span class="material-symbols-rounded">download</span>
-                  </button>
-                  <button class="md-btn-icon" id="btn-update-pdf-trigger" title="Atualizar arquivo PDF (Substituir)">
-                    <span class="material-symbols-rounded">autorenew</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-            
-            <!-- Barra de Progresso de Leitura/Análise de PDF (Cliente) -->
-            <div id="pdf-loading-container" style="display: none; flex-direction: column; gap: 8px; padding: 12px 16px; border: 1px dashed var(--md-sys-color-primary); border-radius: 8px; background-color: var(--md-sys-color-surface-variant); margin-top: 8px;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 13px; font-weight: 500; color: var(--md-sys-color-primary);" id="pdf-loading-status">Lendo PDF localmente...</span>
-                <span style="font-size: 12px; font-weight: 600; color: var(--md-sys-color-primary);" id="pdf-loading-percent">0%</span>
-              </div>
-              <div class="linear-progress-bar" style="width: 100%; height: 6px; background-color: rgba(0,0,0,0.06); border-radius: 3px; overflow: hidden;">
-                <div id="pdf-loading-fill" style="width: 0%; height: 100%; background-color: var(--md-sys-color-primary); border-radius: 3px; transition: width 0.2s ease;"></div>
-              </div>
-            </div>
-            
-            <!-- Tarja Vermelha: PDF Desatualizado (Exibida se houver andamento na API que não está no PDF) -->
-            <div class="pdf-outdated-banner" id="pdf-outdated-banner" style="display: none;">
-              <span class="material-symbols-rounded">warning</span>
-              <span><strong>PDF DESATUALIZADO:</strong> Existem publicações recentes no Datajud que não constam neste arquivo PDF. Atualize o arquivo para refletir o andamento real.</span>
-            </div>
-            
-            <input type="file" id="pdf-file-input" accept=".pdf" style="display: none;">
-          </div>
-          
-          <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: center;">
-            <button class="md-btn md-btn-tonal" id="btn-refresh-datajud">
-              <span class="material-symbols-rounded">sync</span>
-              <span>Recarregar Dados do Datajud</span>
-            </button>
-          </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <span class="material-symbols-rounded">psychology</span>
         </div>
-        
-        <!-- Tab 2: Movimentações -->
-        <div class="modal-tab-content" id="tab-movimentos">
-          <div class="timeline" id="modal-timeline">
-            <!-- Linha do tempo injetada dinamicamente -->
-          </div>
-        </div>
-        
-        <!-- Tab 3: Agenda e Tarefas (Calendário e To-do) -->
-        <div class="modal-tab-content" id="tab-agenda-tarefas">
-          <div class="agenda-layout-grid">
-            
-            <!-- Coluna 1: Calendário Visual -->
-            <div class="agenda-calendar-block">
-              <div class="calendar-header-widget">
-                <button class="md-btn-icon" id="cal-prev-month" title="Mês Anterior"><span class="material-symbols-rounded">chevron_left</span></button>
-                <h4 id="calendar-month-year">Julho 2026</h4>
-                <button class="md-btn-icon" id="cal-next-month" title="Próximo Mês"><span class="material-symbols-rounded">chevron_right</span></button>
-              </div>
-              
-              <!-- Grade de Dias da Semana -->
-              <div class="calendar-days-grid" style="border-bottom: 1px solid var(--md-sys-color-outline-variant); margin-bottom: 8px; padding-bottom: 4px;">
-                <div class="calendar-day-header">D</div>
-                <div class="calendar-day-header">S</div>
-                <div class="calendar-day-header">T</div>
-                <div class="calendar-day-header">Q</div>
-                <div class="calendar-day-header">Q</div>
-                <div class="calendar-day-header">S</div>
-                <div class="calendar-day-header">S</div>
-              </div>
-              
-              <div class="calendar-days-grid" id="calendar-days-container">
-                <!-- Injetado dinamicamente via JS -->
-              </div>
-              
-              <div class="calendar-selected-details">
-                <div class="selected-day-title" id="selected-day-title">Selecione um dia para ver prazos</div>
-                <div class="selected-day-deadlines" id="calendar-selected-day-details">
-                  <p style="font-size: 11px; color: var(--md-sys-color-on-surface-variant); margin: 0;">Nenhum prazo selecionado.</p>
-                </div>
-              </div>
-            </div>
-
-            <!-- Coluna 2: Lista de Tarefas do Perito -->
-            <div class="agenda-tasks-block">
-              <div class="tasks-header-bar">
-                <h4>📋 Tarefas a Realizar (Perito)</h4>
-                <button class="md-btn md-btn-tonal md-btn-compact" id="btn-add-manual-task" title="Adicionar tarefa manual">
-                  <span class="material-symbols-rounded">add</span>
-                  <span>Nova Tarefa</span>
-                </button>
-              </div>
-              <p class="tasks-subtitle">Alimentado automaticamente a partir dos prazos forenses (CPC) identificados pela IA no PDF.</p>
-              
-              <!-- Container de Tarefas -->
-              <div class="tasks-list-container" id="tasks-list-container">
-                <!-- Checkboxes de tarefas preenchidos via JS -->
-              </div>
-            </div>
-
-          </div>
-        </div>
-
-        <!-- Tab 4: Análise IA -->
-        <div class="modal-tab-content" id="tab-ai-analysis">
-          <div id="ai-analysis-container"></div>
-        </div>
-
+        <h3>Ficha Técnica Inteligente</h3>
+        <p>A inteligência artificial analisa a capa e as decisões do PDF para extrair o perito nomeado, juros/ônus e honorários sem alucinações.</p>
       </div>
-      <div class="dialog-footer" style="display: flex; justify-content: flex-end; align-items: center; width: 100%;">
-        <button class="md-btn md-btn-tonal" id="modal-btn-archive">
-          <span class="material-symbols-rounded" id="modal-btn-archive-icon">archive</span>
-          <span id="modal-btn-archive-text">Arquivar Processo</span>
-        </button>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <span class="material-symbols-rounded">trending_up</span>
+        </div>
+        <h3>Correção TJSP em Tempo Real</h3>
+        <p>Cálculo monetário automático dia a dia baseado nas tabelas oficiais do TJSP com travas automáticas na entrega do laudo.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <span class="material-symbols-rounded">calendar_today</span>
+        </div>
+        <h3>Agenda CPC e Tarefas</h3>
+        <p>Mapeamento de prazos do Código de Processo Civil (como os 5 dias para proposta) sugeridos e linkados diretamente no PDF.</p>
       </div>
     </div>
-  </div>
-  
-  <!-- MODAL 3: Configurações -->
-  <div class="md-dialog-overlay" id="settings-dialog">
-    <div class="md-dialog">
-      <div class="dialog-header">
-        <div class="dialog-title-group">
-          <span class="material-symbols-rounded dialog-header-icon">settings</span>
-          <h3>Configurações</h3>
-        </div>
-        <button class="close-dialog-btn" onclick="closeDialog('settings-dialog')">
-          <span class="material-symbols-rounded">close</span>
-        </button>
-      </div>
-      
-      <!-- Abas Internas de Configurações -->
-      <div class="dialog-tabs" id="settings-dialog-tabs" style="margin-bottom: 16px;">
-        <button class="tab-btn active" data-settings-target="settings-tab-dados">
-          <span class="material-symbols-rounded">database</span>
-          <span>Dados</span>
-        </button>
-        <button class="tab-btn" data-settings-target="settings-tab-arquivados" id="tab-btn-settings-archived">
-          <span class="material-symbols-rounded">archive</span>
-          <span>Arquivados</span>
-        </button>
-        <button class="tab-btn" data-settings-target="settings-tab-desenvolvedor">
-          <span class="material-symbols-rounded">developer_mode</span>
-          <span>Desenvolvedor</span>
-        </button>
-      </div>
-      
-      <div class="dialog-content">
+  </section>
+
+  <!-- Seção de Preços -->
+  <section class="pricing" id="pricing">
+    <div class="section-header">
+      <h2>Planos Simples e Transparentes</h2>
+      <p>Escolha a assinatura ideal e garanta mais produtividade nas suas perícias judiciais.</p>
+    </div>
+
+    <div class="pricing-toggle">
+      <span class="toggle-label active" id="label-monthly">Assinatura Mensal</span>
+      <label class="switch">
+        <input type="checkbox" id="pricing-switch" checked>
+        <span class="slider"></span>
+      </label>
+      <span class="toggle-label" id="label-annual">Assinatura Anual <span class="pricing-badge">Economize 28%</span></span>
+    </div>
+
+    <div class="pricing-cards">
+      <!-- Plano Único Flexível -->
+      <div class="pricing-card featured" id="card-plan">
+        <h3>Acesso Ilimitado</h3>
+        <p class="desc">A ferramenta completa para gerenciar as suas perícias do início ao fim.</p>
         
-        <!-- Tab 1: Dados -->
-        <div class="settings-tab-content active-tab" id="settings-tab-dados">
-          <div class="settings-group">
-            <h4>Gerenciamento de Dados</h4>
-            <p class="settings-desc">Exporte seus processos salvos ou limpe toda a memória local deste dispositivo.</p>
-            
-            <div class="settings-actions-row">
-              <button class="md-btn md-btn-tonal" id="btn-export-data">
-                <span class="material-symbols-rounded">download</span>
-                <span>Exportar Backup</span>
-              </button>
-              <button class="md-btn md-btn-tonal" id="btn-import-trigger">
-                <span class="material-symbols-rounded">upload</span>
-                <span>Importar Backup</span>
-              </button>
-              <input type="file" id="import-file-input" accept=".json" style="display: none;">
-            </div>
-            
-            <button class="md-btn md-btn-error" id="btn-clear-all-data" style="margin-top: 16px; width: 100%;">
-              <span class="material-symbols-rounded">delete_forever</span>
-              <span>Limpar Todos os Dados Locais</span>
-            </button>
-
-            <!-- Bloco de Confirmação de Deleção Permanente (Oculto por padrão) -->
-            <div id="clear-data-confirm-box" style="display: none; margin-top: 16px; padding: 16px; border-radius: 12px; background-color: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); border: 2px dashed var(--md-sys-color-error);">
-              <h4 style="margin: 0 0 8px 0; display: flex; align-items: center; gap: 8px; color: var(--md-sys-color-error); font-weight: 700;">
-                <span class="material-symbols-rounded">warning</span>
-                ATENÇÃO: PERDA DE DADOS IRREVERSÍVEL!
-              </h4>
-              <p style="font-size: 12px; margin: 0 0 12px 0; line-height: 1.4;">
-                Todos os seus processos monitorados, históricos de movimentações, tarefas e laudos anexos associados a esta conta serão <strong>excluídos permanentemente</strong> deste dispositivo. Esta ação é definitiva e não poderá ser desfeita!
-              </p>
-              
-              <div class="form-field-group" style="margin-bottom: 12px;">
-                <label for="delete-confirm-password" style="color: var(--md-sys-color-on-error-container); font-weight: 600; font-size: 13px;">Digite sua senha para confirmar:</label>
-                <input type="password" id="delete-confirm-password" placeholder="Digite sua senha da aplicação" style="background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); border: 1px solid var(--md-sys-color-error); padding: 8px 12px; border-radius: 8px; width: 100%; box-sizing: border-box; margin-top: 4px; font-family: var(--font-plain);">
-              </div>
-              
-              <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                <button class="md-btn md-btn-text" id="btn-cancel-clear-data" style="color: var(--md-sys-color-on-error-container);" onclick="return false;">Cancelar</button>
-                <button class="md-btn md-btn-primary" id="btn-confirm-clear-data" style="background-color: var(--md-sys-color-error); color: var(--md-sys-color-on-error);" onclick="return false;">
-                  Excluir Tudo Permanentemente
-                </button>
-              </div>
-            </div>
-
-            <div class="settings-group" style="margin-top: 24px; border-top: 1px solid var(--md-sys-color-outline-variant); padding-top: 16px;">
-              <h4 style="color: var(--md-sys-color-error);">Excluir Conta Permanentemente</h4>
-              <p class="settings-desc">Esta ação apagará permanentemente seu cadastro no servidor e todos os seus processos associados de forma definitiva.</p>
-              
-              <button class="md-btn md-btn-error" id="btn-delete-account-trigger" style="background-color: transparent; color: var(--md-sys-color-error); border: 1px solid var(--md-sys-color-error); width: 100%;">
-                <span class="material-symbols-rounded">no_accounts</span>
-                <span>Excluir Minha Conta do Sistema</span>
-              </button>
-
-              <!-- Confirmação de Deleção de Conta (Oculto por padrão) -->
-              <div id="delete-account-confirm-box" style="display: none; margin-top: 16px; padding: 16px; border-radius: 12px; background-color: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); border: 2px dashed var(--md-sys-color-error);">
-                <h4 style="margin: 0 0 8px 0; display: flex; align-items: center; gap: 8px; color: var(--md-sys-color-error); font-weight: 700;">
-                  <span class="material-symbols-rounded">warning</span>
-                  EXCLUSÃO DEFINITIVA DA CONTA
-                </h4>
-                <p style="font-size: 12px; margin: 0 0 12px 0; line-height: 1.4;">
-                  Seu cadastro será deletado do servidor. Você será desconectado e todos os processos cadastrados nesta conta serão perdidos.
-                </p>
-                
-                <div class="form-field-group" style="margin-bottom: 8px;">
-                  <label for="delete-account-password" style="color: var(--md-sys-color-on-error-container); font-weight: 600; font-size: 13px;">Digite sua senha atual:</label>
-                  <input type="password" id="delete-account-password" placeholder="Sua senha da aplicação" style="background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); border: 1px solid var(--md-sys-color-error); padding: 8px 12px; border-radius: 8px; width: 100%; box-sizing: border-box; margin-top: 4px; font-family: var(--font-plain);">
-                </div>
-
-                <div class="form-field-group" style="margin-bottom: 12px;">
-                  <label for="delete-account-email" style="color: var(--md-sys-color-on-error-container); font-weight: 600; font-size: 13px;">Confirme seu e-mail de cadastro:</label>
-                  <input type="email" id="delete-account-email" placeholder="Digite seu e-mail para confirmar" style="background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); border: 1px solid var(--md-sys-color-error); padding: 8px 12px; border-radius: 8px; width: 100%; box-sizing: border-box; margin-top: 4px; font-family: var(--font-plain);">
-                </div>
-                
-                <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                  <button class="md-btn md-btn-text" id="btn-cancel-delete-account" style="color: var(--md-sys-color-on-error-container);" onclick="return false;">Cancelar</button>
-                  <button class="md-btn md-btn-primary" id="btn-confirm-delete-account" style="background-color: var(--md-sys-color-error); color: var(--md-sys-color-on-error);" onclick="return false;">
-                    Confirmar Exclusão de Conta
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="price-block">
+          <span class="price-currency">R$</span>
+          <span class="price-value" id="price-amount">49,90</span>
+          <span class="price-period" id="price-period">/mês</span>
         </div>
 
-        <!-- Tab 4: Processos Arquivados -->
-        <div class="settings-tab-content" id="settings-tab-arquivados" style="display: none;">
-          <div class="settings-group">
-            <h4>Processos Arquivados</h4>
-            <p class="settings-desc">Estes processos foram arquivados e estão ocultos do dashboard e das somas financeiras.</p>
-            
-            <div id="settings-archived-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 250px; overflow-y: auto; margin-top: 12px; padding-right: 4px;">
-              <!-- Lista injetada dinamicamente via JS -->
-            </div>
-          </div>
-        </div>
+        <ul class="pricing-features">
+          <li><span class="check material-symbols-rounded">check_circle</span> Processos monitorados ilimitados</li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Análise IA profunda de Fichas Técnicas</li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Atualização monetária diária TJSP</li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Linkagem de decisões e marcação de páginas</li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Agenda de prazos integrados com o CPC</li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Sem limite de upload de PDFs</li>
+        </ul>
 
-        <!-- Tab 5: Área do Desenvolvedor -->
-        <div class="settings-tab-content" id="settings-tab-desenvolvedor" style="display: none;">
-          <!-- Estado Bloqueado: Solicita Senha -->
-          <div id="dev-locked-container">
-            <div class="settings-group">
-              <h4>Acesso Restrito ao Desenvolvedor</h4>
-              <p class="settings-desc">Digite a senha de desenvolvedor para liberar a alteração das chaves globais da aplicação.</p>
-              <div class="md-text-field" style="margin-top: 12px;">
-                <span class="material-symbols-rounded field-icon">lock</span>
-                <input type="password" id="dev-password-input" placeholder="Senha do desenvolvedor">
-                <button class="md-btn md-btn-primary" id="btn-unlock-dev" style="margin-left: 8px;" type="button">Liberar</button>
-              </div>
-              <p id="dev-password-error" style="color: var(--md-sys-color-error); font-size: 12px; margin-top: 8px; display: none; font-weight: bold;">⚠️ Senha incorreta.</p>
-            </div>
-          </div>
-
-          <!-- Estado Liberado: Configurações Globais -->
-          <div id="dev-unlocked-container" style="display: none;">
-            <!-- Supabase Storage Config -->
-            <div class="settings-group">
-              <h4>Armazenamento em Nuvem (Supabase Storage)</h4>
-              <p class="settings-desc">Credenciais do Supabase para hospedar e persistir os arquivos PDF na nuvem.</p>
-              
-              <div class="form-field-group" style="margin-bottom: 12px;">
-                <label for="settings-supabase-url">Supabase Project URL</label>
-                <div class="md-text-field" style="margin-top: 4px;">
-                  <span class="material-symbols-rounded field-icon">link</span>
-                  <input type="text" id="settings-supabase-url" placeholder="https://xxxxxxxxxxxxxx.supabase.co">
-                </div>
-              </div>
-              
-              <div class="form-field-group" style="margin-bottom: 12px;">
-                <label for="settings-supabase-anon-key">Supabase Anon Key</label>
-                <div class="md-text-field" style="margin-top: 4px;">
-                  <span class="material-symbols-rounded field-icon">key</span>
-                  <input type="password" id="settings-supabase-anon-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
-                  <button class="clear-btn" id="btn-toggle-supabase-key-visibility" type="button">
-                    <span class="material-symbols-rounded" id="supabase-key-visibility-icon">visibility</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="form-field-group">
-                <label for="settings-supabase-bucket">Nome do Bucket</label>
-                <div class="md-text-field" style="margin-top: 4px;">
-                  <span class="material-symbols-rounded field-icon">folder_open</span>
-                  <input type="text" id="settings-supabase-bucket" placeholder="Datajud">
-                </div>
-              </div>
-            </div>
-
-            <div class="form-divider"></div>
-
-            <!-- Importação por Nome (Área Restrita do Desenvolvedor) -->
-            <div class="settings-group">
-              <h4>Importação em Lote por Nome</h4>
-              <p class="settings-desc">Realiza consulta direta no Datajud para localizar processos pelo nome da parte ou perito.</p>
-              
-              <div class="form-field-group" style="margin-bottom: 12px;">
-                <label for="settings-import-court">Tribunal para Pesquisa</label>
-                <select id="settings-import-court">
-                  <!-- Populado via JS -->
-                </select>
-              </div>
-              
-              <div class="form-field-group" style="margin-bottom: 12px;">
-                <label for="settings-import-name">Nome Exato da Parte ou Perito</label>
-                <div class="md-text-field" style="margin-top: 4px;">
-                  <span class="material-symbols-rounded field-icon">person</span>
-                  <input type="text" id="settings-import-name" placeholder="Ex: João da Silva Santos">
-                </div>
-              </div>
-
-              <div class="form-field-group" style="margin-bottom: 16px;">
-                <label for="settings-import-polo">Filtrar por Polo / Função</label>
-                <select id="settings-import-polo">
-                  <option value="todos">Qualquer menção (Todos)</option>
-                  <option value="ATIVO">Requerente (Polo Ativo / Exequente)</option>
-                  <option value="PASSIVO">Requerido (Polo Passivo / Executado)</option>
-                </select>
-              </div>
-
-              <button class="md-btn md-btn-primary" id="btn-start-batch-import" style="width: 100%;">
-                <span class="material-symbols-rounded">cloud_sync</span>
-                <span>Buscar e Importar</span>
-              </button>
-
-              <div id="batch-import-status-box" style="display: none; margin-top: 16px; padding: 12px; border-radius: 8px; background-color: var(--md-sys-color-surface-variant); border: 1px solid var(--md-sys-color-outline-variant);">
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                  <span class="material-symbols-rounded spinning" id="batch-import-spinner" style="color: var(--md-sys-color-primary); font-size: 20px;">sync</span>
-                  <span id="batch-import-status-text" style="font-size: 13px; font-weight: 600;">Buscando registros no Datajud...</span>
-                </div>
-                <p id="batch-import-details" style="font-size: 11px; margin: 4px 0 0 0; color: var(--md-sys-color-on-surface-variant); line-height: 1.4;"></p>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-      </div>
-      
-      <div class="dialog-footer">
-        <button class="md-btn md-btn-primary" onclick="saveSettings()">Salvar e Fechar</button>
+        <a href="/app" class="btn-pricing" id="btn-subscribe">
+          Assinar Agora
+        </a>
       </div>
     </div>
-  </div>
+  </section>
 
-  <!-- MODAL 4: Adicionar Tarefa Global -->
-  <div class="md-dialog-overlay" id="add-global-task-dialog">
-    <div class="md-dialog">
-      <div class="dialog-header">
-        <div class="dialog-title-group">
-          <span class="material-symbols-rounded dialog-header-icon">add_task</span>
-          <h3>Nova Tarefa Global</h3>
-        </div>
-        <button class="close-dialog-btn" onclick="closeDialog('add-global-task-dialog')">
-          <span class="material-symbols-rounded">close</span>
-        </button>
-      </div>
-      <div class="dialog-content">
-        <div class="form-field-group" style="margin-bottom: 12px;">
-          <label for="global-task-process">Associar ao Processo</label>
-          <select id="global-task-process" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);">
-            <!-- Populado via JS -->
-          </select>
-        </div>
-        <div class="form-field-group" style="margin-bottom: 12px;">
-          <label for="global-task-title">Título da Tarefa</label>
-          <input type="text" id="global-task-title" placeholder="Ex: Apresentar proposta de honorários" style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain);">
-        </div>
-        <div class="form-field-group" style="margin-bottom: 12px;">
-          <label for="global-task-date">Prazo Limite (Vencimento)</label>
-          <input type="date" id="global-task-date" style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain);">
-        </div>
-        <div class="form-field-group">
-          <label for="global-task-desc">Descrição / Artigo CPC</label>
-          <input type="text" id="global-task-desc" placeholder="Ex: Art. 465, § 2º do CPC" style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain);">
-        </div>
-      </div>
-      <div class="dialog-footer">
-        <button class="md-btn md-btn-text" onclick="closeDialog('add-global-task-dialog')">Cancelar</button>
-        <button class="md-btn md-btn-primary" id="btn-save-global-task">Salvar Tarefa</button>
+  <!-- Seção de FAQ -->
+  <section class="faq" id="faq">
+    <div class="section-header">
+      <h2>Dúvidas Frequentes</h2>
+      <p>Tem alguma pergunta sobre o Radar Perito? Encontre a resposta aqui.</p>
     </div>
-  </div>
 
-  <!-- MODAL 5: Editar Tarefa e Alarme -->
-  <div class="md-dialog-overlay" id="task-edit-dialog">
-    <div class="md-dialog">
-      <div class="dialog-header">
-        <div class="dialog-title-group">
-          <span class="material-symbols-rounded dialog-header-icon">edit_note</span>
-          <h3>Editar Tarefa</h3>
+    <div class="faq-list">
+      <div class="faq-item">
+        <div class="faq-question">
+          Como funciona a busca automática no Datajud?
+          <span class="arrow material-symbols-rounded">expand_more</span>
         </div>
-        <button class="close-dialog-btn" onclick="closeDialog('task-edit-dialog')">
-          <span class="material-symbols-rounded">close</span>
-        </button>
+        <div class="faq-answer">
+          O sistema se conecta diretamente à API pública do Datajud (CNJ) utilizando chaves integradas e automatizadas. Ele varre o andamento processual periodicamente e alerta você sempre que novas intimações ou movimentações ocorrerem.
+        </div>
       </div>
-      <div class="dialog-content">
-        <input type="hidden" id="edit-task-id">
-        <div class="form-field-group" style="margin-bottom: 12px;">
-          <label for="edit-task-title">Título da Tarefa</label>
-          <input type="text" id="edit-task-title" required style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);">
+
+      <div class="faq-item">
+        <div class="faq-question">
+          A IA pode cometer erros ou alucinar valores?
+          <span class="arrow material-symbols-rounded">expand_more</span>
         </div>
-        <div class="form-field-group" style="margin-bottom: 12px;">
-          <label for="edit-task-desc">Descrição</label>
-          <textarea id="edit-task-desc" style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); resize: vertical; min-height: 60px; background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);"></textarea>
+        <div class="faq-answer">
+          Não no Radar Perito. Criamos filtros de segurança e regras severas no prompt da IA, exigindo que ela responda com "Não informado" caso não encontre uma informação clara no texto do PDF. Ela nunca chuta ou inventa dados.
         </div>
-        <div class="form-field-group" style="margin-bottom: 12px;">
-          <label for="edit-task-date">Data de Vencimento</label>
-          <input type="date" id="edit-task-date" required style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);">
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question">
+          Posso cancelar a assinatura quando quiser?
+          <span class="arrow material-symbols-rounded">expand_more</span>
         </div>
+        <div class="faq-answer">
+          Sim. Não existe fidelidade no plano mensal, e você pode cancelar o serviço a qualquer momento com apenas um clique diretamente no painel do usuário. No plano anual, você garante um desconto de 28% parcelado no ano.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question">
+          O cálculo do TJSP está atualizado?
+          <span class="arrow material-symbols-rounded">expand_more</span>
+        </div>
+        <div class="faq-answer">
+          Sim. Nosso cálculo utiliza os índices consolidados de juros do Art. 406 do CC e a tabela de correção monetária do TJSP com conversão em taxas diárias. Além disso, o cálculo é automaticamente travado na data em que você entrega o laudo ou na data de arquivamento.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA Final -->
+  <section class="cta-final">
+    <div class="cta-container">
+      <h2>Pronto para escalar seu controle de perícias?</h2>
+      <p>Cadastre-se hoje mesmo e ganhe tempo, precisão financeira e segurança nos seus prazos processuais.</p>
+      <a href="/app" class="btn-primary" style="padding: 18px 46px;">
+        Começar Grátis agora
+      </a>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-links">
+      <a href="#features">Recursos</a>
+      <a href="#pricing">Preços</a>
+      <a href="/app">Painel</a>
+      <a href="#">Termos de Uso</a>
+      <a href="#">Privacidade</a>
+    </div>
+    <p>&copy; 2026 Radar Perito. Todos os direitos reservados. Feito com excelência para peritos judiciais.</p>
+  </footer>
+
+  <script>
+    // Lógica do Toggle de Preços
+    const pricingSwitch = document.getElementById('pricing-switch');
+    const priceAmount = document.getElementById('price-amount');
+    const pricePeriod = document.getElementById('price-period');
+    const labelMonthly = document.getElementById('label-monthly');
+    const labelAnnual = document.getElementById('label-annual');
+
+    function updatePricing() {
+      if (pricingSwitch.checked) {
+        // Plano Anual
+        priceAmount.textContent = '49,90';
+        pricePeriod.textContent = '/mês (cobrado anualmente)';
+        labelAnnual.classList.add('active');
+        labelMonthly.classList.remove('active');
+      } else {
+        // Plano Mensal
+        priceAmount.textContent = '69,90';
+        pricePeriod.textContent = '/mês';
+        labelMonthly.classList.add('active');
+        labelAnnual.classList.remove('active');
+      }
+    }
+
+    pricingSwitch.addEventListener('change', updatePricing);
+    // Inicialização
+    updatePricing();
+
+    // Lógica dos Acordeões do FAQ
+    const faqQuestions = document.querySelectorAll('.faq-question');
+    faqQuestions.forEach(q => {
+      q.addEventListener('click', () => {
+        const item = q.parentElement;
+        const isActive = item.classList.contains('active');
         
-        <!-- Configuração de Alarme -->
-        <div class="form-field-group" style="margin-top: 16px; padding: 12px; border: 1px solid var(--md-sys-color-outline-variant); border-radius: 8px; background: var(--md-sys-color-surface-variant);">
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <label style="font-weight: 600; display: flex; align-items: center; gap: 8px; margin: 0; cursor: pointer;">
-              <span class="material-symbols-rounded text-primary" style="font-size: 20px;">alarm</span>
-              Configurar Alarme / Lembrete
-            </label>
-            <input type="checkbox" id="edit-task-alarm-enable" style="cursor: pointer;">
-          </div>
-          <div id="alarm-datetime-picker-container" style="margin-top: 8px; display: none;">
-            <label for="edit-task-alarm-datetime" style="font-size: 11px; margin-bottom: 4px; display: block; color: var(--md-sys-color-on-surface-variant);">Data e Hora do Lembrete</label>
-            <input type="datetime-local" id="edit-task-alarm-datetime" style="width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--md-sys-color-outline-variant); font-family: var(--font-plain); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface);">
-          </div>
-        </div>
-      </div>
-      <div class="dialog-footer">
-        <button class="md-btn md-btn-text" onclick="closeDialog('task-edit-dialog')">Cancelar</button>
-        <button class="md-btn md-btn-primary" id="btn-save-task-edit">Salvar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Recipiente para Toast Notifications (Snackbar) -->
-  <div class="snackbar-container" id="snackbar-container"></div>
-  
-  <!-- Biblioteca PDF.js para extração de texto no lado do cliente (rápido e sem limites de tamanho) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
-  
-  <!-- SDK do Supabase para Armazenamento na Nuvem -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  
-  <script src="js/app.js?v=1.0.3"></script>
+        // Fecha todos os outros FAQs
+        document.querySelectorAll('.faq-item').forEach(el => el.classList.remove('active'));
+        
+        if (!isActive) {
+          item.classList.add('active');
+        }
+      });
+    });
+  </script>
 </body>
 </html>

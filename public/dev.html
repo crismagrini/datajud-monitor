@@ -930,6 +930,29 @@
           }
         }
         
+        // Status do Trial de 7 Dias
+        const createdDate = new Date(user.createdAt || new Date());
+        const diffTime = Math.abs(new Date() - createdDate);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        let trialStatusHtml = '';
+        if (user.subscriptionActive) {
+          trialStatusHtml = `<div style="color: var(--color-success); font-weight: 600; font-size: 11px; margin-top: 6px; display: flex; align-items: center; gap: 4px;"><span class="material-symbols-rounded" style="font-size: 14px;">workspace_premium</span> Assinante Premium</div>`;
+        } else if (user.trialExtended) {
+          trialStatusHtml = `
+            <div style="color: var(--color-success); font-weight: 600; font-size: 11px; margin-top: 6px; display: flex; align-items: center; gap: 4px;" title="Reabilitado pelo administrador">
+              <span class="material-symbols-rounded" style="font-size: 14px;">check_circle</span> Trial Liberado (Admin)
+              <button class="btn-apply-block" style="padding: 2px 6px; font-size: 9px; margin-left: 6px; background: var(--color-error);" onclick="toggleTrialExtended('${user.email}', false)">Bloquear</button>
+            </div>`;
+        } else if (diffDays > 7) {
+          trialStatusHtml = `
+            <div style="color: var(--color-error); font-weight: 600; font-size: 11px; margin-top: 6px; display: flex; align-items: center; gap: 4px;" title="Período de testes expirado (mais de 7 dias)">
+              <span class="material-symbols-rounded" style="font-size: 14px;">error</span> Trial Expirado (${diffDays} dias)
+              <button class="btn-apply-block" style="padding: 2px 6px; font-size: 9px; margin-left: 6px; background: var(--color-success);" onclick="toggleTrialExtended('${user.email}', true)">Reabilitar</button>
+            </div>`;
+        } else {
+          trialStatusHtml = `<div style="color: var(--color-warning); font-weight: 600; font-size: 11px; margin-top: 6px; display: flex; align-items: center; gap: 4px;"><span class="material-symbols-rounded" style="font-size: 14px;">schedule</span> Testando (${8 - diffDays} dias restantes)</div>`;
+        }
+
         const blockHtml = `
           <div>
             ${currentBlockStr}
@@ -937,6 +960,7 @@
               <input type="datetime-local" class="block-date-input" id="block-input-${pwId}" value="${user.blockedUntil ? user.blockedUntil.slice(0, 16) : ''}" min="${todayStr}">
               <button class="btn-apply-block" onclick="applyUserBlockDate('${user.email}', 'block-input-${pwId}')" title="Aplicar data de bloqueio">Definir</button>
             </div>
+            ${trialStatusHtml}
           </div>
         `;
 
@@ -1065,6 +1089,31 @@
         } else {
           const err = await response.json();
           triggerToast(err.error || 'Erro ao aplicar bloqueio.', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        triggerToast('Falha de conexão com o servidor.', 'error');
+      }
+    };
+
+    // REABILITAR / BLOQUEAR PERÍODO DE TESTE (TRIAL)
+    window.toggleTrialExtended = async function(email, extend) {
+      try {
+        const response = await fetch('/api/dev/users/update-trial-extended', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${devToken}`
+          },
+          body: JSON.stringify({ email, trialExtended: extend })
+        });
+        
+        if (response.ok) {
+          triggerToast(extend ? 'Usuário reabilitado com sucesso!' : 'Bloqueio de testes aplicado com sucesso!', 'success');
+          await loadUsers();
+        } else {
+          const err = await response.json();
+          triggerToast(err.error || 'Erro ao atualizar status de teste.', 'error');
         }
       } catch (err) {
         console.error(err);

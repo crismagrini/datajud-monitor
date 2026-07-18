@@ -54,6 +54,23 @@ async function authenticateToken(req, res, next) {
       }
     }
 
+    // Validação do Período de Testes (Trial de 7 dias)
+    const createdDate = new Date(dbUser.createdAt || new Date());
+    const diffTime = Math.abs(new Date() - createdDate);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays > 7) {
+      const activeSub = !!dbUser.subscriptionActive;
+      const extended = !!dbUser.trialExtended;
+      
+      if (!activeSub && !extended) {
+        return res.status(403).json({ 
+          error: 'CONTA_BLOQUEADA_TRIAL', 
+          message: 'Seu período de testes de 7 dias expirou. Faça uma assinatura para reabilitar seu acesso ou entre em contato com o suporte.' 
+        });
+      }
+    }
+
     // Inibe acesso a recursos protegidos se a conta não estiver verificada
     if (dbUser.verified === false && req.path !== '/api/auth/verify-email') {
       return res.status(403).json({ error: 'CONTA_NAO_VERIFICADA', message: 'E-mail pendente de verificação.' });
@@ -82,6 +99,11 @@ app.use(express.urlencoded({ limit: '200mb', extended: true }));
 
 // Servir arquivos estáticos do frontend
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Rota para a aplicação (painel)
+app.get('/app', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'app.html'));
+});
 
 // Rota de Cadastro de Usuário
 app.post('/api/auth/register', async (req, res) => {
@@ -156,6 +178,23 @@ app.post('/api/auth/login', async (req, res) => {
         return res.status(403).json({ 
           error: 'ACESSO_BLOQUEADO', 
           message: `Seu acesso está temporariamente bloqueado pelo administrador até ${blockDate.toLocaleString('pt-BR')}.` 
+        });
+      }
+    }
+
+    // Validação do Período de Testes (Trial de 7 dias)
+    const createdDate = new Date(user.createdAt || new Date());
+    const diffTime = Math.abs(new Date() - createdDate);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays > 7) {
+      const activeSub = !!user.subscriptionActive;
+      const extended = !!user.trialExtended;
+      
+      if (!activeSub && !extended) {
+        return res.status(403).json({ 
+          error: 'CONTA_BLOQUEADA_TRIAL', 
+          message: 'Seu período de testes de 7 dias expirou. Faça uma assinatura para reabilitar seu acesso ou entre em contato com o suporte.' 
         });
       }
     }
@@ -696,6 +735,22 @@ app.post('/api/dev/users/update-block', authenticateDevToken, async (req, res) =
   }
 });
 
+// 4.1 Rota para atualizar a extensão de testes (trial) do usuário
+app.post('/api/dev/users/update-trial-extended', authenticateDevToken, async (req, res) => {
+  const { email, trialExtended } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'E-mail é obrigatório.' });
+  }
+
+  try {
+    await db.updateUser(email, { trialExtended: !!trialExtended });
+    res.json({ message: 'Extensão de testes atualizada com sucesso!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao configurar extensão de testes.' });
+  }
+});
+
 // 5. Rota para deletar usuário
 app.post('/api/dev/users/delete', authenticateDevToken, async (req, res) => {
   const { email } = req.body;
@@ -753,6 +808,157 @@ app.post('/api/dev/blacklist/remove', authenticateDevToken, async (req, res) => 
     console.error(err);
     res.status(500).json({ error: 'Erro ao remover da blacklist.' });
   }
+});
+
+// === INTEGRAÇÃO STRIPE (PAGAMENTOS & ASSINATURAS) ===
+const Stripe = require('stripe');
+const stripeKey = process.env.STRIPE_SECRET_KEY;
+let stripe = null;
+if (stripeKey) {
+  stripe = new Stripe(stripeKey);
+}
+
+// 1. Rota para iniciar a checkout session (pode ser real ou simulada)
+app.post('/api/payment/create-checkout-session', async (req, res) => {
+  const { plan, email } = req.body;
+  if (!email || !plan) {
+    return res.status(400).json({ error: 'Plano e e-mail são obrigatórios.' });
+  }
+
+  // Se a chave da Stripe não estiver configurada no .env, inicia o fluxo simulado (sandbox)
+  if (!stripe) {
+    console.log(`[Stripe Sandbox] Redirecionando ${email} para checkout simulado do plano ${plan}.`);
+    return res.json({ url: `/mock-checkout.html?plan=${plan}&email=${encodeURIComponent(email)}` });
+  }
+
+  try {
+    const priceId = plan === 'annual' 
+      ? process.env.STRIPE_ANNUAL_PRICE_ID 
+      : process.env.STRIPE_MONTHLY_PRICE_ID;
+
+    if (!priceId) {
+      return res.status(400).json({ error: 'IDs de preço da Stripe não configurados no servidor.' });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card', 'pix'],
+      line_items: [{ price: priceId, quantity: 1 }],
+      mode: 'subscription',
+      customer_email: email,
+      success_url: `${req.headers.origin}/app?checkout=success`,
+      cancel_url: `${req.headers.origin}/`,
+      metadata: { plan, email }
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error('[Stripe Error]', err);
+    res.status(500).json({ error: 'Erro ao gerar checkout do Stripe.' });
+  }
+});
+
+// 2. Rota de confirmação do checkout simulado (sandbox)
+app.post('/api/payment/mock-confirm', async (req, res) => {
+  const { email, plan } = req.body;
+  if (!email || !plan) {
+    return res.status(400).json({ error: 'Plano e e-mail são obrigatórios.' });
+  }
+
+  try {
+    const expiresDate = new Date();
+    if (plan === 'annual') {
+      expiresDate.setFullYear(expiresDate.getFullYear() + 1);
+    } else {
+      expiresDate.setMonth(expiresDate.getMonth() + 1);
+    }
+
+    const dbUser = await db.findUserByEmail(email);
+    if (!dbUser) {
+      return res.status(404).json({ error: 'Usuário não cadastrado.' });
+    }
+
+    await db.updateUser(email, {
+      subscriptionActive: true,
+      subscriptionPlan: plan,
+      subscriptionExpires: expiresDate.toISOString()
+    });
+
+    console.log(`[Stripe Sandbox] Assinatura do plano ${plan} confirmada com sucesso para ${email}!`);
+    res.json({ message: 'Pagamento simulado efetuado com sucesso!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha ao ativar assinatura simulada.' });
+  }
+});
+
+// 3. Status de cobrança do usuário (API consumida pelo Dashboard)
+app.get('/api/payment/status', authenticateToken, async (req, res) => {
+  try {
+    const user = await db.findUserByEmail(req.user.email);
+    if (!user) return res.status(404).json({ error: 'Usuário não localizado.' });
+
+    // Verifica se a assinatura expirou
+    let active = !!user.subscriptionActive;
+    if (active && user.subscriptionExpires) {
+      const expiry = new Date(user.subscriptionExpires);
+      if (expiry < new Date()) {
+        active = false;
+        await db.updateUser(user.email, { subscriptionActive: false });
+      }
+    }
+
+    res.json({
+      subscriptionActive: active,
+      subscriptionPlan: user.subscriptionPlan || 'free',
+      subscriptionExpires: user.subscriptionExpires || null
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao verificar status da assinatura.' });
+  }
+});
+
+// 4. Webhook oficial do Stripe
+app.post('/api/payment/webhook', async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  let event;
+
+  try {
+    if (endpointSecret && sig && stripe) {
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } else {
+      event = req.body;
+    }
+  } catch (err) {
+    console.error(`❌ Erro na assinatura do Webhook Stripe:`, err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const email = session.customer_email || session.metadata?.email;
+    const plan = session.metadata?.plan || 'monthly';
+
+    if (email) {
+      const expiresDate = new Date();
+      if (plan === 'annual') {
+        expiresDate.setFullYear(expiresDate.getFullYear() + 1);
+      } else {
+        expiresDate.setMonth(expiresDate.getMonth() + 1);
+      }
+
+      await db.updateUser(email, {
+        subscriptionActive: true,
+        subscriptionPlan: plan,
+        subscriptionExpires: expiresDate.toISOString()
+      });
+      console.log(`🔔 Stripe Webhook: Assinatura ativada via webhook real para ${email} (plano ${plan})`);
+    }
+  }
+
+  res.json({ received: true });
 });
 
 // Qualquer outra rota serve o index.html (SPA fallback)

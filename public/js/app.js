@@ -259,6 +259,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Verificação de alarmes inicial
     setTimeout(checkActiveAlarms, 3000);
   }
+
+  // Lógica do Modal de Cobrança / Assinaturas (Stripe)
+  const options = document.querySelectorAll('.plan-option');
+  options.forEach(opt => {
+    opt.addEventListener('click', () => {
+      options.forEach(o => {
+        o.classList.remove('active');
+        o.style.borderColor = 'var(--border-color)';
+      });
+      opt.classList.add('active');
+      opt.style.borderColor = 'var(--primary)';
+      const radio = opt.querySelector('input[type="radio"]');
+      if (radio) radio.checked = true;
+    });
+  });
+
+  const btnSubmitBilling = document.getElementById('btn-submit-billing');
+  if (btnSubmitBilling) {
+    btnSubmitBilling.addEventListener('click', async () => {
+      const selectedPlan = document.querySelector('input[name="billing-plan-select"]:checked')?.value || 'monthly';
+      btnSubmitBilling.disabled = true;
+      btnSubmitBilling.innerHTML = '<span class="material-symbols-rounded" style="animation: spin 1s linear infinite;">progress_activity</span> Redirecionando...';
+
+      try {
+        const resp = await authFetch('/api/payment/create-checkout-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ plan: selectedPlan, email: currentUserEmail })
+        });
+
+        if (resp.ok) {
+          const result = await resp.json();
+          if (result.url) {
+            window.location.href = result.url;
+          } else {
+            throw new Error('URL de checkout inválida.');
+          }
+        } else {
+          const err = await resp.json();
+          throw new Error(err.error || 'Erro ao criar sessão de pagamento.');
+        }
+      } catch (err) {
+        showToast(`Erro de Pagamento: ${err.message}`, 'error');
+        btnSubmitBilling.disabled = false;
+        btnSubmitBilling.innerHTML = '<span class="material-symbols-rounded">credit_card</span><span>Assinar com Stripe</span>';
+      }
+    });
+  }
+
+  // Verifica se o redirecionamento pós-pagamento ocorreu com sucesso
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('checkout') === 'success') {
+    showToast('✓ Assinatura Premium ativada com sucesso!', 'success');
+    // Remove o query param da URL sem recarregar a página
+    const newUrl = window.location.pathname;
+    window.history.replaceState({}, document.title, newUrl);
+  }
 });
 
 // Controladores da Interface de Autenticação
@@ -286,11 +343,40 @@ function showVerificationScreen(testCode = '') {
   document.getElementById('verification-error-box').style.display = 'none';
 }
 
+async function updateSubscriptionUI() {
+  const container = document.getElementById('user-subscription-badge');
+  if (!container) return;
+
+  try {
+    const resp = await authFetch('/api/payment/status');
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.subscriptionActive) {
+        container.innerHTML = `
+          <span class="badge-plan-premium" style="font-size: 11px; background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 20px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;" title="Assinatura ativa!"><span class="material-symbols-rounded" style="font-size: 14px;">workspace_premium</span> Premium</span>
+        `;
+      } else {
+        container.innerHTML = `
+          <span class="badge-plan-free" id="btn-show-billing" style="font-size: 11px; background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 20px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;" title="Clique para assinar"><span class="material-symbols-rounded" style="font-size: 14px;">lock</span> Grátis / Demo</span>
+        `;
+        document.getElementById('btn-show-billing')?.addEventListener('click', () => {
+          openDialog('billing-dialog');
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Erro ao buscar status de assinatura:', err);
+  }
+}
+
 function showDashboard() {
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('email-verification-screen').style.display = 'none';
   document.querySelector('.app-container').style.display = 'flex';
   document.getElementById('user-display-email').textContent = currentUserEmail;
+  
+  // Atualiza a exibição do plano de assinatura
+  updateSubscriptionUI();
   
   // Atualiza contador de radar em segundo plano
   setTimeout(updateRadarBadgeCount, 500);
@@ -374,7 +460,7 @@ function setupAuthEventListeners() {
 
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.error || 'Erro ao realizar login.');
+        throw new Error(data.message || data.error || 'Erro ao realizar login.');
       }
 
       jwtToken = data.token;
