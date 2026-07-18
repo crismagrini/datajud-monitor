@@ -73,6 +73,9 @@ const PORT = process.env.PORT || 3000;
 // Chave pública padrão do CNJ Datajud obtida da documentação oficial
 const DEFAULT_API_KEY = 'cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==';
 
+// Chave da API Groq para análise de IA
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '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';
+
 app.use(cors());
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
@@ -475,6 +478,50 @@ app.post('/api/search', authenticateToken, async (req, res) => {
     console.error('[Proxy] Erro de rede ou servidor ao consultar CNJ:', error);
     res.status(500).json({
       error: 'Falha interna ao tentar se comunicar com o Datajud.',
+      details: error.message
+    });
+  }
+});
+
+// Rota para análise de processos com IA (Groq) - a chave fica no servidor
+app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
+  const { prompt } = req.body;
+
+  if (!prompt) {
+    return res.status(400).json({ error: 'O parâmetro "prompt" é obrigatório.' });
+  }
+
+  console.log('[AI Proxy] Enviando prompt para Groq. Tamanho:', prompt.length);
+
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GROQ_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('[AI Proxy] Erro da API Groq:', data);
+      return res.status(response.status).json({
+        error: 'Erro retornado pela API Groq.',
+        details: data
+      });
+    }
+
+    res.json(data);
+  } catch (error) {
+    console.error('[AI Proxy] Erro de rede ao consultar Groq:', error);
+    res.status(500).json({
+      error: 'Falha interna ao consultar a API Groq.',
       details: error.message
     });
   }

@@ -38,10 +38,8 @@ const DEFAULT_SUPABASE_URL = 'https://kivijjbwktgcjbthkque.supabase.co';
 const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdmlqamJ3a3RnY2pidGhrcXVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNTc2MzQsImV4cCI6MjA5OTczMzYzNH0.iknAdlHezamlfpM436vGGUCUIi_l4yQdDjr8VW91wRE';
 const DEFAULT_SUPABASE_BUCKET = 'Datajud';
 
-// Chave da API Groq para análise de processos
-const AI_API_KEY = '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';
-const AI_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const AI_MODEL = 'llama-3.3-70b-versatile';
+// Configuração da API de IA (chave fica no servidor, não exposta ao cliente)
+const AI_API_URL = '/api/ai/analyze';
 
 // Estado da Aplicação (Variáveis Globais) - Sem simulações fictícias
 let supabaseUrl = '';
@@ -4221,24 +4219,21 @@ async function renderRadarDashboard() {
    ========================================================================== */
 
 async function callAIApi(prompt) {
-  console.log('[AI] Enviando prompt para Groq. Tamanho:', prompt.length);
+  console.log('[AI] Enviando prompt para servidor proxy. Tamanho:', prompt.length);
 
-  const response = await fetch(AI_API_URL, {
+  const response = await authFetch('/api/ai/analyze', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${AI_API_KEY}`
-    },
-    body: JSON.stringify({
-      model: AI_MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.2
-    })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt })
   });
 
   if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Erro na API (${response.status}): ${errText}`);
+    let errMsg = 'Erro na análise de IA.';
+    try {
+      const err = await response.json();
+      errMsg = err.error || errMsg;
+    } catch(ex) {}
+    throw new Error(`${errMsg} (${response.status})`);
   }
 
   const data = await response.json();
