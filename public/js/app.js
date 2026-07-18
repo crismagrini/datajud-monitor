@@ -4266,8 +4266,8 @@ function buildAIPrompt(proc) {
   const expert = proc.expertInfo || {};
   const tasks = proc.tasks || [];
 
-  // Constrói lista completa de movimentações
-  const movimentosStr = (proc.movimentos || []).map((m, i) => {
+  // Constrói lista de movimentações (limitado às 30 mais recentes para evitar exceder limites de tokens da IA)
+  const movimentosStr = (proc.movimentos || []).slice(0, 30).map((m, i) => {
     const data = m.dataHora ? new Date(m.dataHora).toLocaleString('pt-BR') : 'data não informada';
     return `  ${i+1}. [${data}] ${m.nome}${m.detalhes ? ' - ' + m.detalhes : ''}`;
   }).join('\n');
@@ -4293,7 +4293,8 @@ function buildAIPrompt(proc) {
   if (expert.depositoJudicial) expertStr += `\n- Depósito Judicial: ${expert.depositoJudicial}`;
   if (expert.resumoProcesso) expertStr += `\n- Resumo do Processo: ${expert.resumoProcesso}`;
 
-  const pdfText = proc.pdfText ? proc.pdfText.substring(0, 12000) : '';
+  // Limitado a 8000 caracteres para compatibilidade com os limites estritos de TPM do Groq
+  const pdfText = proc.pdfText ? proc.pdfText.substring(0, 8000) : '';
 
   return `Você é um assistente jurídico especializado em direito processual civil brasileiro (CPC). Sua função é EXTRAIR dados do PDF do processo anexado abaixo.
 

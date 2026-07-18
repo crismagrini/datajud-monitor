@@ -493,38 +493,79 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
 
   console.log('[AI Proxy] Enviando prompt para Groq. Tamanho:', prompt.length);
 
-  try {
-    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2
-      })
-    });
+  let model = 'llama-3.3-70b-versatile';
+  let attempts = 0;
+  const maxAttempts = 3;
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('[AI Proxy] Erro da API Groq:', data);
-      return res.status(response.status).json({
-        error: 'Erro retornado pela API Groq.',
-        details: data
+  while (attempts < maxAttempts) {
+    attempts++;
+    try {
+      console.log(`[AI Proxy] Chamando o modelo Groq: ${model} (Tentativa ${attempts}/${maxAttempts})`);
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${GROQ_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.2
+        })
       });
-    }
 
-    res.json(data);
-  } catch (error) {
-    console.error('[AI Proxy] Erro de rede ao consultar Groq:', error);
-    res.status(500).json({
-      error: 'Falha interna ao consultar a API Groq.',
-      details: error.message
-    });
+      const data = await response.json();
+
+      // Se bater no limite de taxa, tenta fazer fallback se estiver no 70B, senão espera e tenta novamente
+      if (response.status === 429) {
+        if (model === 'llama-3.3-70b-versatile') {
+          console.warn(`[AI Proxy Rate Limit] Limite de tokens atingido para llama-3.3-70b-versatile. Fazendo fallback automático para llama-3.1-8b-instant...`);
+          model = 'llama-3.1-8b-instant';
+          attempts = 0; // reseta tentativas para o novo modelo
+          continue;
+        }
+        const delaySec = data.error?.message?.match(/in (\d+\.\d+)s/)?.[1] || 7;
+        const waitMs = Math.ceil(parseFloat(delaySec) * 1000) + 500;
+        console.warn(`[AI Proxy Rate Limit] Limite de tokens atingido. Aguardando ${waitMs}ms para tentar novamente (Tentativa ${attempts}/${maxAttempts})...`);
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+
+      if (!response.ok) {
+        console.error('[AI Proxy] Erro da API Groq:', data);
+        if (model === 'llama-3.3-70b-versatile') {
+          console.warn(`[AI Proxy Error] Erro com llama-3.3-70b-versatile. Fazendo fallback para llama-3.1-8b-instant...`);
+          model = 'llama-3.1-8b-instant';
+          attempts = 0;
+          continue;
+        }
+        return res.status(response.status).json({
+          error: 'Erro retornado pela API Groq.',
+          details: data
+        });
+      }
+
+      return res.json(data);
+    } catch (error) {
+      console.error('[AI Proxy] Exceção na chamada ao Groq:', error);
+      if (model === 'llama-3.3-70b-versatile') {
+        console.warn(`[AI Proxy Exception] Exceção com llama-3.3-70b-versatile: ${error.message}. Fazendo fallback automático para llama-3.1-8b-instant...`);
+        model = 'llama-3.1-8b-instant';
+        attempts = 0;
+        continue;
+      }
+      if (attempts >= maxAttempts) {
+        return res.status(500).json({
+          error: 'Falha interna ao consultar a API Groq.',
+          details: error.message
+        });
+      }
+      console.warn(`[AI Proxy Connection] Falha de conexão. Aguardando 2s para tentar novamente (Tentativa ${attempts}/${maxAttempts})...`);
+      await new Promise(r => setTimeout(r, 2000));
+    }
   }
+
+  res.status(500).json({ error: 'Falha ao processar a requisição no Groq após várias tentativas.' });
 });
 
 // Rota para extração de texto de arquivo PDF usando pdf-parse (stateless - PROTEGIDA)
