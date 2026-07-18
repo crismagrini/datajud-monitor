@@ -510,7 +510,8 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
         body: JSON.stringify({
           model: model,
           messages: [{ role: 'user', content: prompt }],
-          temperature: 0.2
+          temperature: 0.2,
+          max_tokens: 1200
         })
       });
 

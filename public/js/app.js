@@ -1926,6 +1926,27 @@ async function getPdfAccessUrl(filePath) {
   }
 }
 
+// Abre o PDF na nuvem na página correspondente à decisão/intimação
+async function openProcessPdfAtPage(pageNumber) {
+  if (!activeProcess || !activeProcess.pdfPath) {
+    showToast("PDF original não disponível na nuvem.");
+    return;
+  }
+  try {
+    const paths = activeProcess.pdfPath.split(',');
+    showToast('Obtendo link do PDF...');
+    const url = await getPdfAccessUrl(paths[0]);
+    if (url) {
+      const pageParam = pageNumber ? `#page=${pageNumber}` : '';
+      window.open(url + pageParam, '_blank');
+    } else {
+      showToast('Não foi possível obter a URL do arquivo.');
+    }
+  } catch (err) {
+    showToast(`Erro ao abrir o PDF: ${err.message}`);
+  }
+}
+
 /* ==========================================================================
    LÓGICA DE UPLOAD E LEITURA DE PDF (CLIENT-SIDE COM LOADING BAR)
    ========================================================================== */
@@ -1946,7 +1967,7 @@ async function extractTextFromPdfClient(file, progressCallback) {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
     const pageText = textContent.items.map(item => item.str).join(' ');
-    fullText += pageText + '\n\n';
+    fullText += `[PÁGINA ${i}]\n` + pageText + '\n\n';
     
     if (progressCallback) {
       progressCallback(i, numPages);
@@ -2273,6 +2294,19 @@ async function renderDashboard(filterQuery = '') {
 
     const lastCheckedStr = proc.lastChecked ? new Date(proc.lastChecked).toLocaleString('pt-BR') : 'Nunca';
 
+    const info = proc.expertInfo || {};
+    let honorariosRow = '';
+    if (info.honorarios) {
+      const baseDateStr = info.dataDeposito || info.dataHonorarios || proc.dataAjuizamento || null;
+      const valUpdated = calculateUpdatedFees(info.honorarios, baseDateStr, proc.tribunal, info.dataEntregaLaudo, proc.archivedDate);
+      honorariosRow = `
+        <div class="detail-row" style="color: var(--md-sys-color-primary);">
+          <span class="material-symbols-rounded">payments</span>
+          <span><strong>Valor Perícia:</strong> ${formatCurrency(info.honorarios)} (Corrigido: ${formatCurrency(valUpdated)})</span>
+        </div>
+      `;
+    }
+
     card.innerHTML = `
       ${proc.hasUpdate ? '<span class="card-notification-dot"></span>' : ''}
       <div class="process-card-header">
@@ -2296,6 +2330,7 @@ async function renderDashboard(filterQuery = '') {
           <span class="material-symbols-rounded">person_search</span>
           <span><strong>Réu:</strong> ${reu}</span>
         </div>
+        ${honorariosRow}
       </div>
       
       <div class="process-card-footer">
@@ -3235,11 +3270,22 @@ function renderTasksList() {
       alarmBadge = `<span class="task-cpc-badge" style="background-color: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); display: inline-flex; align-items: center; gap: 4px;"><span class="material-symbols-rounded" style="font-size: 11px;">alarm</span>${alarmLabel}</span>`;
     }
 
+    let originLinkHtml = '';
+    if (task.decisionPage) {
+      if (activeProcess.pdfPath) {
+        const pageNum = task.decisionPage.replace(/[^0-9]/g, '');
+        originLinkHtml = `<div style="margin-top: 4px; font-size: 11px;"><a href="#" onclick="openProcessPdfAtPage(${pageNum}); return false;" style="display: inline-flex; align-items: center; gap: 4px; color: var(--md-sys-color-primary); text-decoration: none;"><span class="material-symbols-rounded" style="font-size: 13px;">open_in_new</span> Ver decisão na ${task.decisionPage}</a></div>`;
+      } else {
+        originLinkHtml = `<div style="margin-top: 4px; font-size: 11px; color: var(--md-sys-color-outline); display: inline-flex; align-items: center; gap: 4px;"><span class="material-symbols-rounded" style="font-size: 13px;">description</span> Localizado na ${task.decisionPage}</div>`;
+      }
+    }
+
     item.innerHTML = `
       <input type="checkbox" id="chk-${task.id}" ${task.completed ? 'checked' : ''}>
       <div class="task-checkbox-details">
         <span class="task-checkbox-title">${task.title}</span>
         <span class="task-checkbox-desc">${task.description || ''}</span>
+        ${originLinkHtml}
         <div class="task-checkbox-badge-row">
           <span class="task-date-badge">${dateLabel}</span>
           ${task.cpcArticle ? `<span class="task-cpc-badge">${task.cpcArticle}</span>` : ''}
@@ -4310,11 +4356,17 @@ async function callAIApi(prompt) {
 
   let jsonStr = text.trim();
 
-  if (jsonStr.startsWith('```')) {
-    const lines = jsonStr.split('\n');
-    if (lines[0].trim().startsWith('```')) lines.shift();
-    if (lines.length > 0 && lines[lines.length - 1].trim() === '```') lines.pop();
-    jsonStr = lines.join('\n').trim();
+  // Tenta extrair o JSON de dentro de blocos de marcação markdown ```json ... ```
+  const match = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (match && match[1]) {
+    jsonStr = match[1].trim();
+  } else {
+    // Se não encontrou o bloco, busca a primeira ocorrência de '{' e a última '}'
+    const firstBrace = jsonStr.indexOf('{');
+    const lastBrace = jsonStr.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      jsonStr = jsonStr.substring(firstBrace, lastBrace + 1).trim();
+    }
   }
 
   const parsed = JSON.parse(jsonStr);
@@ -4331,7 +4383,7 @@ function buildAIPrompt(proc) {
   const tasks = proc.tasks || [];
 
   // Constrói lista de movimentações (limitado às 30 mais recentes para evitar exceder limites de tokens da IA)
-  const movimentosStr = (proc.movimentos || []).slice(0, 30).map((m, i) => {
+  const movimentosStr = (proc.movimentos || []).slice(0, 10).map((m, i) => {
     const data = m.dataHora ? new Date(m.dataHora).toLocaleString('pt-BR') : 'data não informada';
     return `  ${i+1}. [${data}] ${m.nome}${m.detalhes ? ' - ' + m.detalhes : ''}`;
   }).join('\n');
@@ -4360,12 +4412,146 @@ function buildAIPrompt(proc) {
   if (expert.dataEntregaLaudo) expertStr += `\n- Data Entrega do Laudo: ${expert.dataEntregaLaudo}`;
   if (expert.resumoProcesso) expertStr += `\n- Resumo do Processo: ${expert.resumoProcesso}`;
 
-  // Limitado a 8000 caracteres para compatibilidade com os limites estritos de TPM do Groq
-  const pdfText = proc.pdfText ? proc.pdfText.substring(0, 8000) : '';
+  // Filtro Inteligente de PDF (Keyword Context Scanner)
+  // Preserva os primeiros 2.000 caracteres (capa/foro/partes) e anexa trechos com termos chave do restante do PDF de trás para frente
+  let pdfText = '';
+  if (proc.pdfText) {
+    pdfText = proc.pdfText.substring(0, 2000);
+    
+    let relevantExcerpts = [];
+    let currentLength = pdfText.length;
+    
+    // Tier 1: Termos jurídicos de nomeação, honorários e prova altamente cruciais
+    const tier1 = ['perito', 'nomeio', 'nomeação', 'honorários', 'depósito', 'arbitro', 'inversão', 'ônus', 'ufesp'];
+    // Tier 2: Termos secundários de ritos e prazos que podem gerar muito ruído/exceder o buffer
+    const tier2 = ['laudo', 'prazo', 'intimação', 'intime', 'gratuita'];
 
-  return `Você é um assistente jurídico especializado em direito processual civil brasileiro (CPC). Sua função é EXTRAIR dados do PDF do processo anexado abaixo.
+    if (proc.pdfText.includes('[PÁGINA ')) {
+      const pageBlocks = proc.pdfText.split(/\[PÁGINA /);
+      
+      // Pass 1: Busca apenas Tier 1 de trás para frente para priorizar dados de expert e perícia
+      for (let p = pageBlocks.length - 1; p >= 1; p--) {
+        const block = pageBlocks[p];
+        const closeBracketIndex = block.indexOf(']');
+        if (closeBracketIndex === -1) continue;
+        
+        const pageNum = block.substring(0, closeBracketIndex).trim();
+        const pageContent = block.substring(closeBracketIndex + 1);
+        
+        const pageLines = pageContent.split('\n');
+        for (let i = pageLines.length - 1; i >= 0; i--) {
+          const line = pageLines[i].trim();
+          if (line.length < 10) continue;
+          
+          const lineLower = line.toLowerCase();
+          const hasTier1 = tier1.some(kw => lineLower.includes(kw));
+          
+          if (hasTier1) {
+            const prevLine = i > 0 ? pageLines[i-1].trim() : '';
+            const nextLine = i < pageLines.length - 1 ? pageLines[i+1].trim() : '';
+            const excerpt = `\n[Página ${pageNum} - Linha ${i}]:\n${prevLine ? prevLine + '\n' : ''}${line}\n${nextLine ? nextLine + '\n' : ''}`;
+            
+            if (currentLength + excerpt.length < 4500) {
+              relevantExcerpts.push(excerpt);
+              currentLength += excerpt.length;
+            } else {
+              break;
+            }
+          }
+        }
+        if (currentLength >= 4500) break;
+      }
+      
+      // Pass 2: Se ainda houver cota de caracteres, busca Tier 2 de trás para frente
+      if (currentLength < 4500) {
+        for (let p = pageBlocks.length - 1; p >= 1; p--) {
+          const block = pageBlocks[p];
+          const closeBracketIndex = block.indexOf(']');
+          if (closeBracketIndex === -1) continue;
+          
+          const pageNum = block.substring(0, closeBracketIndex).trim();
+          const pageContent = block.substring(closeBracketIndex + 1);
+          
+          const pageLines = pageContent.split('\n');
+          for (let i = pageLines.length - 1; i >= 0; i--) {
+            const line = pageLines[i].trim();
+            if (line.length < 10) continue;
+            
+            const lineLower = line.toLowerCase();
+            const hasTier1 = tier1.some(kw => lineLower.includes(kw));
+            if (hasTier1) continue; // Evita duplicar o que já foi lido no Pass 1
+            
+            const hasTier2 = tier2.some(kw => lineLower.includes(kw));
+            if (hasTier2) {
+              const prevLine = i > 0 ? pageLines[i-1].trim() : '';
+              const nextLine = i < pageLines.length - 1 ? pageLines[i+1].trim() : '';
+              const excerpt = `\n[Página ${pageNum} - Linha ${i}]:\n${prevLine ? prevLine + '\n' : ''}${line}\n${nextLine ? nextLine + '\n' : ''}`;
+              
+              if (currentLength + excerpt.length < 4500) {
+                relevantExcerpts.push(excerpt);
+                currentLength += excerpt.length;
+              } else {
+                break;
+              }
+            }
+          }
+          if (currentLength >= 4500) break;
+        }
+      }
+    } else {
+      // Fallback para PDFs antigos sem marcação de página
+      // Pass 1
+      const lines = proc.pdfText.split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (line.length < 10) continue;
+        const lineLower = line.toLowerCase();
+        const hasTier1 = tier1.some(kw => lineLower.includes(kw));
+        if (hasTier1) {
+          const prevLine = i > 0 ? lines[i-1].trim() : '';
+          const nextLine = i < lines.length - 1 ? lines[i+1].trim() : '';
+          const excerpt = `\n[Trecho relevante - Linha ${i}]:\n${prevLine ? prevLine + '\n' : ''}${line}\n${nextLine ? nextLine + '\n' : ''}`;
+          if (currentLength + excerpt.length < 4500) {
+            relevantExcerpts.push(excerpt);
+            currentLength += excerpt.length;
+          } else {
+            break;
+          }
+        }
+      }
+      // Pass 2
+      if (currentLength < 4500) {
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i].trim();
+          if (line.length < 10) continue;
+          const lineLower = line.toLowerCase();
+          const hasTier1 = tier1.some(kw => lineLower.includes(kw));
+          if (hasTier1) continue;
+          const hasTier2 = tier2.some(kw => lineLower.includes(kw));
+          if (hasTier2) {
+            const prevLine = i > 0 ? lines[i-1].trim() : '';
+            const nextLine = i < lines.length - 1 ? lines[i+1].trim() : '';
+            const excerpt = `\n[Trecho genérico - Linha ${i}]:\n${prevLine ? prevLine + '\n' : ''}${line}\n${nextLine ? nextLine + '\n' : ''}`;
+            if (currentLength + excerpt.length < 4500) {
+              relevantExcerpts.push(excerpt);
+              currentLength += excerpt.length;
+            } else {
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    if (relevantExcerpts.length > 0) {
+      pdfText += '\n\n--- [TRECHOS SELECIONADOS DO PROCESSO COM AS PÁGINAS DE ORIGEM] ---\n' + relevantExcerpts.join('\n');
+    }
+  }
 
+  return `Você é um assistente jurídico especializado em direito processual civil brasileiro (CPC). Sua função principal e OBRIGAÇÃO MANDATÓRIA ABSOLUTA é EXTRAIR dados da Ficha Técnica do Expert/Perito a partir do PDF do processo anexado abaixo.
+ 
 INSTRUÇÕES IMPORTANTES:
+- OBRIGAÇÃO MANDATÓRIA PRINCIPAL: É OBRIGATÓRIO que a análise identifique e preencha os nomes completos das partes (autor/requerente e réu/requerido), o nome completo do perito judicial nomeado ("perito") e o valor exato dos honorários periciais arbitrados pelo juiz ("honorarios").
 - LEIA ATENTAMENTE TODO O TEXTO DO PDF extraído abaixo. Busque de forma aprofundada por menções a perícia técnica, nomeação de peritos, decisões sobre ônus da prova, valores e datas de depósitos.
 - Extraia o nome COMPLETO do autor/requerente e do réu/requerido.
 - Identifique a classe processual exata e o assunto principal do processo.
@@ -4376,7 +4562,9 @@ INSTRUÇÕES IMPORTANTES:
 - Identifique se houve depósito judicial e se sim, qual o valor e a data correspondentes ("depositoJudicial", "valorDeposito", "dataDeposito").
 - Analise as movimentações e datas mencionadas no PDF.
 - Crie um resumo detalhado baseado no conteúdo do PDF.
-- Se houver menção a perícia, crie tarefas pertinentes.
+- CRIAÇÃO DE TAREFAS EXCLUSIVAS E EFETIVAMENTE SOLICITADAS DO PERITO: Crie tarefas/atribuições APENAS se elas tiverem sido efetivamente solicitadas ou determinadas nas decisões do juiz que constam no texto do PDF do processo, e que estejam estritamente dentro do escopo de trabalho do perito judicial conforme o CPC (como apresentar proposta de honorários, declinar da nomeação, entregar laudo pericial, prestar esclarecimentos complementares ou requerer levantamento de honorários). Nunca sugira tarefas genéricas, preventivas ou hipotéticas que não possuam uma determinação expressa e real no texto do PDF. Para cada tarefa gerada, identifique em qual página (ex: "Página 3") consta a intimação ou decisão correspondente utilizando as marcações presentes nos trechos (ex: "[Página X]") e preencha no campo "decision_page" do JSON.
+
+
 
 PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
 {
@@ -4389,9 +4577,9 @@ PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
     "orgao": "órgão julgador extraído do PDF (ou 'Não informado' se não encontrado)",
     "perito": "nome completo do perito judicial nomeado extraído do PDF (ou 'Não nomeado' se não encontrado)",
     "inversaoOnus": "indique se há decisão ou requerimento de inversão do ônus da prova: 'Sim', 'Não' ou 'Não informado'",
-    "honorarios": 3500.00,
+    "honorarios": null,
     "depositoJudicial": "indique se houve depósito judicial dos honorários: 'Sim', 'Não', 'Parcial' ou 'Não informado'",
-    "valorDeposito": 3500.00,
+    "valorDeposito": null,
     "dataDeposito": "data em que o depósito judicial foi realizado no formato AAAA-MM-DD ou null se não encontrado"
   },
   "tasks": [
@@ -4399,16 +4587,25 @@ PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
       "title": "título claro da tarefa",
       "description": "descrição detalhada com base no CPC",
       "deadline_days": 5,
-      "cpc_article": "465"
+      "cpc_article": "465",
+      "decision_page": "página ou trecho do PDF onde consta a intimação ou decisão do juiz (ex: 'Página 3' ou null se não encontrado)"
     }
   ]
 }
 
 REGRAS:
-- PRIORIDADE MÁXIMA: Extraia os campos do TEXTO DO PDF abaixo. Leia o PDF com atenção.
-- Preencha "fields" APENAS com dados extraídos do PDF. Se o dado não estiver no PDF nem nos dados abaixo, use "Não informado" ou null.
-- Crie tarefas pertinentes ao perito judicial se houver menção a perícia no PDF.
-- Prazos típicos do CPC: art.465 (5 dias), art.466 (prazo para laudo), art.468 (15 dias para assistente técnico), art.477 (prazo para impugnação).
+- OBRIGAÇÃO E PRIORIDADE MÁXIMA DA ANÁLISE: A análise deve obrigatoriamente trazer os nomes das partes (autor/requerente e réu/requerido), o nome completo do perito nomeado e o valor dos honorários periciais arbitrados pelo juiz. O preenchimento destes campos da Ficha Técnica do Expert/Perito é a obrigação principal e mandatória desta análise. Dedique seus esforços primários para extrair com exatidão estes dados.
+- EXTRAÇÃO UNICAMENTE REAL DO PDF: Extraia os campos unicamente do TEXTO DO PDF abaixo.
+- Jamais coloque na resposta valores fictícios, supostos ou deduzidos. Se uma informação (como honorários, perito nomeado, dados de depósito, etc.) não estiver explicitamente escrita no texto do PDF, você deve retornar obrigatoriamente "Não informado", "Não nomeado" ou null (conforme a instrução de cada campo). Não invente ou replique dados de exemplo sob hipótese alguma.
+- CRIAÇÃO DE TAREFAS DO PERITO: Crie APENAS tarefas que são atribuições diretas do Perito Judicial no processo e que foram expressamente determinadas/solicitadas em alguma decisão/despacho constante no texto do PDF.
+  As únicas tarefas sugeridas permitidas são:
+  1. "Apresentar proposta de honorários, currículo e contatos" (CPC art. 465, § 2º - Prazo: 5 dias contados da intimação da nomeação)
+  2. "Manifestar escusa ou impedimento (declínio de nomeação)" (CPC art. 467 e 146 - Prazo: 5 dias contados da intimação da nomeação)
+  3. "Informar data, hora e local de realização da perícia" (CPC art. 466, § 2º - Antecedência mínima)
+  4. "Entregar laudo pericial" (CPC art. 477 - Prazo determinado pelo juiz na intimação, ex: 20 dias antes da audiência ou outro prazo assinalado pelo juiz)
+  5. "Prestar esclarecimentos sobre o laudo / Responder a impugnação" (CPC art. 477, § 2º - Prazo: 15 dias contados da intimação)
+  6. "Solicitar levantamento de honorários periciais" (CPC art. 465, § 4º - Após a entrega do laudo ou realização dos trabalhos)
+- NUNCA crie tarefas genéricas (como realizar a perícia técnica) ou preventivas/hipotéticas que não possuam uma intimação ou ordem real e expressa contida no texto do PDF.
 - NÃO duplique tarefas existentes.
 - Se NÃO houver task relevante, retorne array vazio.
 
@@ -4582,26 +4779,130 @@ function dateFromNow(days) {
   return { date: `${y}-${m}-${day}`, display: `${day}/${m}/${y}` };
 }
 
+function checkIfFieldsDiffer(data) {
+  if (!activeProcess || !data?.fields) return false;
+  const f = data.fields;
+  const info = activeProcess.expertInfo || {};
+  const isValid = v => v && v.trim() && v !== 'Não informado' && v !== 'Não informada' && v !== 'Não nomeado';
+
+  if (isValid(f.autor) && f.autor !== info.autor) return true;
+  if (isValid(f.reu) && f.reu !== info.reu) return true;
+  if (isValid(f.perito) && f.perito !== info.perito) return true;
+  if (isValid(f.inversaoOnus) && f.inversaoOnus !== info.inversaoOnus) return true;
+  if (isValid(f.depositoJudicial) && f.depositoJudicial !== info.depositoJudicial) return true;
+  
+  if (f.honorarios !== undefined && f.honorarios !== null) {
+    const currentHonorarios = parseFloat(info.honorarios);
+    const aiHonorarios = parseFloat(f.honorarios);
+    if (!isNaN(aiHonorarios) && aiHonorarios !== currentHonorarios) return true;
+  }
+  if (f.valorDeposito !== undefined && f.valorDeposito !== null) {
+    const currentValorDeposito = parseFloat(info.valorDeposito);
+    const aiValorDeposito = parseFloat(f.valorDeposito);
+    if (!isNaN(aiValorDeposito) && aiValorDeposito !== currentValorDeposito) return true;
+  }
+  if (f.dataDeposito && f.dataDeposito !== info.dataDeposito) return true;
+
+  if (isValid(f.classe) && f.classe !== activeProcess.classe?.nome) return true;
+  const currentAssunto = activeProcess.assuntos?.[0]?.nome || '';
+  if (isValid(f.assunto) && f.assunto !== currentAssunto) return true;
+  if (isValid(f.orgao) && f.orgao !== activeProcess.orgaoJulgador?.nome) return true;
+
+  return false;
+}
+
+function isFieldMatching(fieldName, aiValue) {
+  if (!activeProcess) return false;
+  const info = activeProcess.expertInfo || {};
+  const isValid = v => v && String(v).trim() && v !== 'Não informado' && v !== 'Não informada' && v !== 'Não nomeado';
+  
+  if (!isValid(aiValue)) return false;
+
+  switch (fieldName) {
+    case 'autor': return info.autor === aiValue;
+    case 'reu': return info.reu === aiValue;
+    case 'perito': return info.perito === aiValue;
+    case 'inversaoOnus': return info.inversaoOnus === aiValue;
+    case 'depositoJudicial': return info.depositoJudicial === aiValue;
+    case 'dataDeposito': return info.dataDeposito === aiValue;
+    case 'classe': return activeProcess.classe?.nome === aiValue;
+    case 'assunto': {
+      const currentAssunto = activeProcess.assuntos?.[0]?.nome || '';
+      return currentAssunto === aiValue;
+    }
+    case 'orgao': return activeProcess.orgaoJulgador?.nome === aiValue;
+    case 'honorarios': {
+      const currentHonorarios = parseFloat(info.honorarios);
+      const aiHonorarios = parseFloat(aiValue);
+      return !isNaN(aiHonorarios) && aiHonorarios === currentHonorarios;
+    }
+    case 'valorDeposito': {
+      const currentValorDeposito = parseFloat(info.valorDeposito);
+      const aiValorDeposito = parseFloat(aiValue);
+      return !isNaN(aiValorDeposito) && aiValorDeposito === currentValorDeposito;
+    }
+    default: return false;
+  }
+}
+
 function renderAIResult(data, container) {
-  const hasFields = data.fields && Object.values(data.fields).some(v => v && v.trim() && v !== 'Não informado' && v !== 'Não informada');
+  const hasFields = data.fields && Object.values(data.fields).some(v => v && String(v).trim() && v !== 'Não informado' && v !== 'Não informada');
+  const fieldsDiffer = checkIfFieldsDiffer(data);
 
   let fieldsHtml = '';
   if (data.fields) {
+    const renderFieldItem = (label, name, value, isCurrency = false) => {
+      if (!value) return '';
+      const formattedVal = isCurrency ? formatCurrency(value) : value;
+      const isApplied = isFieldMatching(name, value);
+      
+      const badge = isApplied ? `
+        <span style="font-size: 11px; background: #d1fae5; color: #065f46; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; font-weight: 500; margin-left: 8px;">
+          <span class="material-symbols-rounded" style="font-size: 13px;">check_circle</span> Preenchido
+        </span>
+      ` : '';
+      
+      const style = isApplied ? 'style="color: #065f46;"' : '';
+      
+      return `<li ${style}><strong>${label}:</strong> ${formattedVal} ${badge}</li>`;
+    };
+
     fieldsHtml = `
       <div class="ai-section">
         <h5><span class="material-symbols-rounded">edit_note</span> Campos a Preencher</h5>
         <ul>
-          <li><strong>Autor:</strong> ${data.fields.autor || 'Não informado'}</li>
-          <li><strong>Réu:</strong> ${data.fields.reu || 'Não informado'}</li>
-          <li><strong>Classe:</strong> ${data.fields.classe || 'Não informada'}</li>
-          <li><strong>Assunto:</strong> ${data.fields.assunto || 'Não informado'}</li>
-          <li><strong>Órgão:</strong> ${data.fields.orgao || 'Não informado'}</li>
+          ${renderFieldItem('Autor', 'autor', data.fields.autor)}
+          ${renderFieldItem('Réu', 'reu', data.fields.reu)}
+          ${renderFieldItem('Classe', 'classe', data.fields.classe)}
+          ${renderFieldItem('Assunto', 'assunto', data.fields.assunto)}
+          ${renderFieldItem('Órgão', 'orgao', data.fields.orgao)}
+          ${renderFieldItem('Perito Nomeado', 'perito', data.fields.perito)}
+          ${renderFieldItem('Inversão do Ônus', 'inversaoOnus', data.fields.inversaoOnus)}
+          ${renderFieldItem('Depósito Judicial', 'depositoJudicial', data.fields.depositoJudicial)}
+          ${renderFieldItem('Honorários Arbitrados', 'honorarios', data.fields.honorarios, true)}
+          ${renderFieldItem('Valor Depósito', 'valorDeposito', data.fields.valorDeposito, true)}
+          ${renderFieldItem('Data Depósito', 'dataDeposito', data.fields.dataDeposito)}
         </ul>
-        ${hasFields ? `<button class="btn-ai-apply" id="btn-apply-fields">
-          <span class="material-symbols-rounded">check</span> Aplicar ao Processo
-        </button>` : ''}
+        ${hasFields ? (fieldsDiffer ? `
+          <button class="btn-ai-apply" id="btn-apply-fields">
+            <span class="material-symbols-rounded">check</span> Aplicar ao Processo
+          </button>
+        ` : `
+          <button class="btn-ai-apply" disabled style="background: #22c55e; cursor: default;">
+            <span class="material-symbols-rounded">check_circle</span> Informações Já Aplicadas
+          </button>
+        `) : ''}
       </div>`;
   }
+
+  const existingTasks = activeProcess.tasks || [];
+  const suggestedTasks = data.tasks || [];
+  
+  // Filtra apenas as novas tarefas (não duplicadas por título)
+  const newTasks = suggestedTasks.filter(t => {
+    if (!t.title) return false;
+    return !existingTasks.some(ex => ex.title.toLowerCase() === t.title.toLowerCase());
+  });
 
   let tasksHtml = '';
   if (data.tasks && data.tasks.length > 0) {
@@ -4611,16 +4912,43 @@ function renderAIResult(data, container) {
         <ul>
           ${data.tasks.map(t => {
             const di = dateFromNow(t.deadline_days || 5);
+            let originLinkHtml = '';
+            if (t.decision_page) {
+              if (activeProcess.pdfPath) {
+                const pageNum = t.decision_page.replace(/[^0-9]/g, '');
+                originLinkHtml = `<div style="margin-top: 6px; font-size: 11px;"><a href="#" onclick="openProcessPdfAtPage(${pageNum}); return false;" style="display: inline-flex; align-items: center; gap: 4px; color: var(--md-sys-color-primary); text-decoration: none;"><span class="material-symbols-rounded" style="font-size: 14px;">open_in_new</span> Ver decisão na ${t.decision_page}</a></div>`;
+              } else {
+                originLinkHtml = `<div style="margin-top: 6px; font-size: 11px; color: var(--md-sys-color-outline); display: inline-flex; align-items: center; gap: 4px;"><span class="material-symbols-rounded" style="font-size: 14px;">description</span> Localizado na ${t.decision_page}</div>`;
+              }
+            }
+            
+            const isDup = existingTasks.some(ex => ex.title.toLowerCase() === t.title.toLowerCase());
+            const taskBadge = isDup ? `
+              <span style="font-size: 11px; background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; font-weight: 500;">
+                <span class="material-symbols-rounded" style="font-size: 13px;">check_circle</span> Já criada
+              </span>
+            ` : '';
+
             return `<li>
-              <strong>${t.title}</strong>
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                <strong>${t.title}</strong>
+                ${taskBadge}
+              </div>
               <span>${t.description || ''}</span>
-              <div class="deadline-info">Prazo: ${di.display} (${t.deadline_days || 5} dias) | CPC art. ${t.cpc_article || 'N/A'}</div>
+              ${originLinkHtml}
+              <div class="deadline-info" style="margin-top: 6px;">Prazo: ${di.display} (${t.deadline_days || 5} dias) | CPC art. ${t.cpc_article || 'N/A'}</div>
             </li>`;
           }).join('')}
         </ul>
-        <button class="btn-ai-apply" id="btn-apply-tasks">
-          <span class="material-symbols-rounded">task_alt</span> Criar Tarefas no Sistema
-        </button>
+        ${newTasks.length > 0 ? `
+          <button class="btn-ai-apply" id="btn-apply-tasks">
+            <span class="material-symbols-rounded">task_alt</span> Criar Tarefas no Sistema (${newTasks.length})
+          </button>
+        ` : `
+          <button class="btn-ai-apply" disabled style="background: #22c55e; cursor: default;">
+            <span class="material-symbols-rounded">check_circle</span> Todas as Tarefas Criadas
+          </button>
+        `}
       </div>`;
   }
 
@@ -4732,6 +5060,7 @@ function applyAIFields(data) {
       btn.disabled = true;
       btn.style.background = '#22c55e';
     }
+    setTimeout(renderAIAnalysis, 1000);
   });
 }
 
@@ -4755,6 +5084,7 @@ function createAITasks(data) {
       date: di.date,
       description: t.description || '',
       cpcArticle: t.cpc_article || '',
+      decisionPage: t.decision_page || '',
       completed: false,
       source: 'ai',
       alarmDate: null,
@@ -4773,6 +5103,7 @@ function createAITasks(data) {
       }
       if (typeof renderTasksList === 'function') renderTasksList();
       if (typeof renderCalendarWidget === 'function') renderCalendarWidget();
+      setTimeout(renderAIAnalysis, 1000);
     });
   }
 }

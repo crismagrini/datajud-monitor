@@ -475,11 +475,14 @@
       </div>
       
       <div class="dialog-content">
-        <!-- Navegação interna por abas (M3 Segmented / Tabs) -->
-        <div class="dialog-tabs">
+        <!-- Navegação interna por abas (M3 Segmented / Tabs) -->        <div class="dialog-tabs">
           <button class="tab-btn active" data-modal-target="tab-resumo">
             <span class="material-symbols-rounded">info</span>
             <span>Resumo</span>
+          </button>
+          <button class="tab-btn" data-modal-target="tab-ai-analysis" id="tab-btn-ai-analysis">
+            <span class="material-symbols-rounded">smart_toy</span>
+            <span>Análise IA</span>
           </button>
           <button class="tab-btn" data-modal-target="tab-movimentos">
             <span class="material-symbols-rounded">history</span>
@@ -490,11 +493,8 @@
             <span class="material-symbols-rounded">calendar_today</span>
             <span>Agenda e Tarefas</span>
           </button>
-          <button class="tab-btn" data-modal-target="tab-ai-analysis" id="tab-btn-ai-analysis">
-            <span class="material-symbols-rounded">smart_toy</span>
-            <span>Análise IA</span>
-          </button>
         </div>
+
         
         <!-- Tab 1: Resumo -->
         <div class="modal-tab-content active-tab" id="tab-resumo">
