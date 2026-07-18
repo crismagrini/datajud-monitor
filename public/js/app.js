@@ -34,14 +34,16 @@ const TRIBUNAIS = [
 ];
 
 // Valores Padrão Globais (Área do Desenvolvedor)
-const DEFAULT_GEMINI_API_KEY = ''; // Chave padrão vazia no frontend para segurança (GitHub bloqueia chaves expostas). O servidor usará a chave definida no .env / variáveis de ambiente.
 const DEFAULT_SUPABASE_URL = 'https://kivijjbwktgcjbthkque.supabase.co';
 const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdmlqamJ3a3RnY2pidGhrcXVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNTc2MzQsImV4cCI6MjA5OTczMzYzNH0.iknAdlHezamlfpM436vGGUCUIi_l4yQdDjr8VW91wRE';
 const DEFAULT_SUPABASE_BUCKET = 'Datajud';
 
+// Chave da API Groq para análise de processos
+const AI_API_KEY = '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';
+const AI_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const AI_MODEL = 'llama-3.3-70b-versatile';
+
 // Estado da Aplicação (Variáveis Globais) - Sem simulações fictícias
-let customApiKey = '';
-let geminiApiKey = '';
 let supabaseUrl = '';
 let supabaseAnonKey = '';
 let supabaseBucket = 'Datajud';
@@ -248,6 +250,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Inicia o monitoramento de alarmes periodicamente em segundo plano
   setInterval(checkActiveAlarms, 15000);
+
+  // Sincronização automática periódica de todos os processos monitorados (a cada 15 minutos)
+  setInterval(syncAllMonitoredSilently, 15 * 60 * 1000);
 
   if (isAuthenticated) {
     await renderDashboard();
@@ -573,13 +578,6 @@ function setupAuthEventListeners() {
 
 // Carrega configurações salvas
 function loadConfig() {
-  customApiKey = localStorage.getItem('datajud_api_key') || '';
-  document.getElementById('settings-datajud-key').value = customApiKey;
-  
-  // Se houver chave personalizada no localStorage, usa ela. Caso contrário, usa a padrão global.
-  geminiApiKey = localStorage.getItem('gemini_api_key') || DEFAULT_GEMINI_API_KEY;
-  document.getElementById('settings-gemini-key').value = localStorage.getItem('gemini_api_key') || '';
-
   supabaseUrl = localStorage.getItem('supabase_url') || DEFAULT_SUPABASE_URL;
   document.getElementById('settings-supabase-url').value = localStorage.getItem('supabase_url') || '';
 
@@ -884,9 +882,6 @@ function setupEventListeners() {
     await renderDashboard();
   });
 
-  // Chaves de visibilidade de API
-  setupKeyVisibility('btn-toggle-gemini-key-visibility', 'settings-gemini-key', 'gemini-key-visibility-icon');
-  setupKeyVisibility('btn-toggle-datajud-key-visibility', 'settings-datajud-key', 'datajud-key-visibility-icon');
   setupKeyVisibility('btn-toggle-supabase-key-visibility', 'settings-supabase-anon-key', 'supabase-key-visibility-icon');
 
   // Botão de desbloqueio do painel do desenvolvedor
@@ -985,6 +980,8 @@ function setupEventListeners() {
       
       if (target === 'tab-agenda-tarefas') {
         renderAgendaTab();
+      } else if (target === 'tab-ai-analysis') {
+        renderAIAnalysis();
       }
     });
   });
@@ -1009,11 +1006,6 @@ function setupEventListeners() {
   });
   
   document.getElementById('btn-add-manual-task').addEventListener('click', handleAddManualTask);
-
-  // Botões de Ação da IA
-  document.getElementById('btn-generate-ai-analysis').addEventListener('click', generateAIAnalysis);
-  document.getElementById('btn-regenerate-ai-analysis').addEventListener('click', generateAIAnalysis);
-  document.getElementById('btn-copy-ai-analysis').addEventListener('click', copyAIAnalysisText);
 
   // Edição da Ficha Técnica do Expert
   document.getElementById('btn-edit-expert-info').addEventListener('click', () => {
@@ -1447,10 +1439,14 @@ async function handleRegisterSubmit() {
     if (processObject) {
       const added = await ProcessService.add(processObject);
       if (added === true) {
+        processObject.expertInfo = getInitialExpertInfo(processObject);
+        await ProcessService.update(processObject);
         showToast(`Processo ${formatProcessNumber(processObject.numeroProcesso)} cadastrado com sucesso!`);
         closeDialog('register-process-dialog');
         await renderDashboard();
       } else if (added === 'reactivated') {
+        processObject.expertInfo = getInitialExpertInfo(processObject);
+        await ProcessService.update(processObject);
         showToast(`Processo ${formatProcessNumber(processObject.numeroProcesso)} reativado com sucesso!`);
         closeDialog('register-process-dialog');
         await renderDashboard();
@@ -1544,8 +1540,10 @@ function mapDatajudProcess(hit, defaultCourt) {
     // Normalização robusta de Polo
     const pUpper = (p.polo || '').toUpperCase();
     let polo = 'ATIVO';
-    if (pUpper.includes('PASS') || pUpper.startsWith('PA') || pUpper.startsWith('P')) {
+    if (pUpper.includes('PASS') || pUpper === 'REQUERIDO' || pUpper === 'EXECUTADO' || pUpper === 'R') {
       polo = 'PASSIVO';
+    } else if (pUpper.includes('ATIV') || pUpper === 'AUTOR' || pUpper === 'EXEQUENTE' || pUpper === 'A') {
+      polo = 'ATIVO';
     }
 
     // Normalização de Tipo
@@ -1590,59 +1588,78 @@ function mapDatajudProcess(hit, defaultCourt) {
 }
 
 // Executa a busca real no servidor proxy
+// Retorna registros simulados para processos de teste locais (evita erros em buscas reais no Datajud)
+function getMockSearchHits(cleanCNJ) {
+  if (cleanCNJ === '00260321320088260309') {
+    return [
+      {
+        _id: 'TJSP_00260321320088260309',
+        _source: {
+          numeroProcesso: '0026032-13.2008.8.26.0309',
+          tribunal: 'TJSP',
+          grau: 'G1',
+          classe: { codigo: 11, nome: 'Procedimento Comum Cível' },
+          assuntos: [{ codigo: 7779, nome: 'Indenização por Dano Moral' }, { codigo: 10437, nome: 'Nomeação / Escusa de Perito' }],
+          orgaoJulgador: { codigo: 309, nome: '2ª Vara Cível - Foro de Jundiaí' },
+          dataAjuizamento: '2008-05-14T09:00:00.000Z',
+          dataHoraUltimaAtualizacao: new Date().toISOString(),
+          formato: { nome: 'Físico / Digitalizado' },
+          partes: [
+            { nome: 'Marcos Roberto de Souza', polo: 'ATIVO', tipo: 'Física', numeroDocumentoPrincipal: '12345678900' },
+            { nome: 'Seguradora Porto Real S/A', polo: 'PASSIVO', tipo: 'Jurídica', numeroDocumentoPrincipal: '98765432000199' }
+          ],
+          movimentos: [
+            {
+              nome: 'Nomeação de Perito',
+              dataHora: '2026-07-15T14:30:00.000Z',
+              texto: 'Fica nomeado o perito cadastrado nos autos para apresentar proposta de honorários.'
+            },
+            {
+              nome: 'Juntada de Petição',
+              dataHora: '2026-06-25T11:15:00.000Z',
+              texto: 'Petição de manifestação das partes juntada aos autos.'
+            },
+            {
+              nome: 'Despacho',
+              dataHora: '2026-06-18T16:00:00.000Z',
+              texto: 'Mero expediente. Digam as partes sobre as provas que pretendem produzir.'
+            },
+            {
+              nome: 'Citação',
+              dataHora: '2008-06-10T10:00:00.000Z',
+              texto: 'Carta de citação expedida e entregue ao destinatário.'
+            },
+            {
+              nome: 'Distribuição',
+              dataHora: '2008-05-14T09:00:00.000Z',
+              texto: 'Distribuído por sorteio à 2ª Vara Cível da Comarca de Jundiaí.'
+            }
+          ]
+        }
+      }
+    ];
+  }
+  return null;
+}
+
+// Executa a busca real no servidor proxy
 async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
   // INTERCEPÇÃO DE SIMULAÇÃO LOCAL PARA TESTES DO USUÁRIO
-  if (cleanCNJ === '00260321320088260309') {
+  const mockHits = getMockSearchHits(cleanCNJ);
+  if (mockHits) {
     console.log('🔮 [Simulador] Interceptando busca de processo de teste do usuário.');
-    return {
-      id: `TJSP_00260321320088260309`,
-      numeroProcesso: '0026032-13.2008.8.26.0309',
-      tribunal: 'TJSP',
-      grau: 'G1',
-      classe: { codigo: 11, nome: 'Procedimento Comum Cível' },
-      assuntos: [{ codigo: 7779, nome: 'Indenização por Dano Moral' }, { codigo: 10437, nome: 'Nomeação / Escusa de Perito' }],
-      orgaoJulgador: { codigo: 309, nome: '2ª Vara Cível - Foro de Jundiaí' },
-      dataAjuizamento: '2008-05-14T09:00:00.000Z',
-      dataHoraUltimaAtualizacao: new Date().toISOString(),
-      formato: { nome: 'Físico / Digitalizado' },
-      partes: [
-        { nome: 'Marcos Roberto de Souza', polo: 'ATIVO', tipo: 'Física', numeroDocumentoPrincipal: '12345678900' },
-        { nome: 'Seguradora Porto Real S/A', polo: 'PASSIVO', tipo: 'Jurídica', numeroDocumentoPrincipal: '98765432000199' }
-      ],
-      movimentos: [
-        {
-          nome: 'Nomeação de Perito',
-          dataHora: '2026-07-10T14:30:00.000Z',
-          detalhes: 'Fica nomeado o perito cadastrado nos autos para apresentar proposta de honorários.'
-        },
-        {
-          nome: 'Juntada de Petição',
-          dataHora: '2026-06-25T11:15:00.000Z',
-          detalhes: 'Petição de manifestação das partes juntada aos autos.'
-        },
-        {
-          nome: 'Despacho',
-          dataHora: '2026-06-18T16:00:00.000Z',
-          detalhes: 'Mero expediente. Digam as partes sobre as provas que pretendem produzir.'
-        },
-        {
-          nome: 'Citação',
-          dataHora: '2008-06-10T10:00:00.000Z',
-          detalhes: 'Carta de citação expedida e entregue ao destinatário.'
-        },
-        {
-          nome: 'Distribuição',
-          dataHora: '2008-05-14T09:00:00.000Z',
-          detalhes: 'Distribuído por sorteio à 2ª Vara Cível da Comarca de Jundiaí.'
-        }
-      ]
-    };
+    return mapDatajudProcess(mockHits[0], courtAlias);
   }
+
+  // Query por match_phrase no CNJ formatado (NNNNNNN-DD.AAAA.J.TR.OOOO)
+  const formattedCNJ = cleanCNJ.length === 20
+    ? `${cleanCNJ.substring(0,7)}-${cleanCNJ.substring(7,9)}.${cleanCNJ.substring(9,13)}.${cleanCNJ.substring(13,14)}.${cleanCNJ.substring(14,16)}.${cleanCNJ.substring(16,20)}`
+    : cleanCNJ;
   const query = {
     "size": 1,
     "query": {
-      "match": {
-        "numeroProcesso": cleanCNJ
+      "match_phrase": {
+        "numeroProcesso": formattedCNJ
       }
     }
   };
@@ -1651,7 +1668,7 @@ async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': customApiKey
+      'x-api-key': ''
     },
     body: JSON.stringify({
       tribunal: courtAlias,
@@ -1676,7 +1693,17 @@ async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
     throw new Error(`Processo não localizado ou indisponível temporariamente na API do tribunal ${courtAlias.toUpperCase()}.`);
   }
 
-  return mapDatajudProcess(hits[0], courtAlias);
+  const mapped = mapDatajudProcess(hits[0], courtAlias);
+  console.log('[Datajud] Processo mapeado:', {
+    numero: mapped.numeroProcesso,
+    tribunal: mapped.tribunal,
+    classe: mapped.classe?.nome,
+    assuntos: mapped.assuntos?.length,
+    partes: mapped.partes?.length,
+    movimentos: mapped.movimentos?.length,
+    orgao: mapped.orgaoJulgador?.nome
+  });
+  return mapped;
 }
 
 // Extrai e monta o objeto manual do formulário
@@ -2026,26 +2053,6 @@ async function handlePdfUpload(e) {
     }
     sampleText += '\n\n--- [TRECHOS SELECIONADOS DO PROCESSO] ---\n' + relevantExcerpts.join('\n');
     let expertInfo = getInitialExpertInfo(activeProcess);
-    
-    try {
-      const response = await authFetch('/api/extract-pdf-metadata', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-key': geminiApiKey
-        },
-        body: JSON.stringify({
-          textSample: sampleText
-        })
-      });
-
-      if (response.ok) {
-        const resJSON = await response.json();
-        expertInfo = resJSON.expertInfo || expertInfo;
-      }
-    } catch (metadataErr) {
-      console.warn("Falha ao extrair ficha técnica via IA. Utilizando dados do Datajud:", metadataErr);
-    }
 
     // Salva tudo no banco local IndexedDB
     activeProcess.pdfText = parsedData.text;
@@ -2055,15 +2062,6 @@ async function handlePdfUpload(e) {
     activeProcess.pdfUploadDate = new Date().toISOString();
     activeProcess.pdfPath = supabasePath; // Salva o caminho do arquivo no Supabase
     activeProcess.expertInfo = expertInfo;
-    
-    // Se a IA extraiu a lista de todas as partes qualificadas no PDF, atualiza no cadastro do processo
-    if (expertInfo.todasPartes && expertInfo.todasPartes.length > 0) {
-      activeProcess.partes = expertInfo.todasPartes;
-    }
-    
-    // Reseta análises antigas de IA pois o PDF mudou
-    activeProcess.aiAnalysis = null;
-    activeProcess.aiAnalysisDate = null;
 
     await ProcessService.update(activeProcess);
     
@@ -2074,7 +2072,7 @@ async function handlePdfUpload(e) {
     setTimeout(() => {
       containerLoading.style.display = 'none';
       openProcessDetails(activeProcess);
-      showToast("Texto do PDF processado e Ficha Técnica do Expert atualizada com sucesso!");
+      showToast("Texto do PDF processado com sucesso!");
     }, 600);
     
     await renderDashboard();
@@ -2118,10 +2116,10 @@ function isPdfOutdated(process) {
 
 // Inicializa ficha técnica com base no retorno da API Datajud e órgão julgador
 function getInitialExpertInfo(process) {
-  const autor = process.partes?.filter(p => p.polo === 'ATIVO')?.map(p => p.nome).join(', ') || 'Não localizado';
-  const reu = process.partes?.filter(p => p.polo === 'PASSIVO')?.map(p => p.nome).join(', ') || 'Não localizado';
+  const autor = process.partes?.filter(p => p.polo === 'ATIVO')?.map(p => p.nome).join(', ') || '';
+  const reu = process.partes?.filter(p => p.polo === 'PASSIVO')?.map(p => p.nome).join(', ') || '';
   
-  let comarca = 'Não localizado';
+  let comarca = '';
   if (process.orgaoJulgador && process.orgaoJulgador.nome) {
     const organName = process.orgaoJulgador.nome.toUpperCase();
     let cleanName = organName
@@ -2144,14 +2142,17 @@ function getInitialExpertInfo(process) {
   return {
     autor: autor,
     reu: reu,
-    perito: 'Não nomeado',
-    justicaGratuita: 'Não informado',
-    objetoPericia: 'Não localizado',
+    perito: '',
+    justicaGratuita: '',
+    objetoPericia: '',
     cidadeEstado: comarca,
-    inversaoOnus: 'Não informado',
-    honorarios: null,
-    depositoJudicial: 'Não informado',
-    dataHonorarios: null
+    inversaoOnus: '',
+    honorarios: 0,
+    honorariosUfesp: 0,
+    depositoJudicial: '',
+    dataHonorarios: null,
+    dataDeposito: null,
+    resumoProcesso: ''
   };
 }
 
@@ -2296,10 +2297,6 @@ async function renderDashboard(filterQuery = '') {
       
       <div class="process-card-footer">
         <span>Última busca: ${lastCheckedStr}</span>
-        <div class="ai-status-indicator ${proc.aiAnalysis ? 'analyzed' : ''}">
-          <span class="material-symbols-rounded">${proc.aiAnalysis ? 'check_circle' : 'psychology'}</span>
-          <span>${proc.aiAnalysis ? 'IA Analisou' : 'Sem IA'}</span>
-        </div>
       </div>
     `;
 
@@ -2422,20 +2419,7 @@ async function openProcessDetails(process) {
   // Visualização e estado de arquivos PDF
   renderPdfStatusCard(process);
 
-  // Estado da aba de Análise por IA
-  renderAIAnalysisTab();
 
-  // Configura ação do botão Unmonitor
-  const btnUnmonitor = document.getElementById('modal-btn-unmonitor');
-  const cloneUnmonitor = btnUnmonitor.cloneNode(true);
-  btnUnmonitor.parentNode.replaceChild(cloneUnmonitor, btnUnmonitor);
-  cloneUnmonitor.addEventListener('click', async () => {
-    if (confirm('Deseja realmente parar de monitorar e excluir localmente este processo?')) {
-      await ProcessService.remove(process.numeroProcesso);
-      closeDialog('process-detail-dialog');
-      await renderDashboard();
-    }
-  });
 
   // Configura ação do botão Arquivar/Desarquivar
   const btnArchive = document.getElementById('modal-btn-archive');
@@ -2460,6 +2444,55 @@ async function openProcessDetails(process) {
       showToast(process.archived ? "Processo arquivado!" : "Processo desarquivado!");
       closeDialog('process-detail-dialog');
       await renderDashboard();
+    });
+  }
+
+  // Configura ação do botão Sincronizar
+  const btnSyncNow = document.getElementById('btn-sync-process-now');
+  if (btnSyncNow) {
+    const cloneSync = btnSyncNow.cloneNode(true);
+    btnSyncNow.parentNode.replaceChild(cloneSync, btnSyncNow);
+    cloneSync.addEventListener('click', async () => {
+      await syncSingleProcessManually(process.numeroProcesso, cloneSync);
+    });
+  }
+
+  // Configura ação do botão Recarregar Dados do Datajud
+  const btnRefresh = document.getElementById('btn-refresh-datajud');
+  if (btnRefresh) {
+    const cloneRefresh = btnRefresh.cloneNode(true);
+    btnRefresh.parentNode.replaceChild(cloneRefresh, btnRefresh);
+    cloneRefresh.addEventListener('click', async () => {
+      cloneRefresh.disabled = true;
+      cloneRefresh.innerHTML = '<span class="material-symbols-rounded spinning">sync</span><span>Sincronizando...</span>';
+      try {
+        const cleanCNJ = process.numeroProcesso.replace(/[^0-9]/g, '');
+        const courtAlias = detectCourtFromCNJ(cleanCNJ);
+        if (courtAlias) {
+          const mapped = await fetchProcessFromAPI(cleanCNJ, courtAlias);
+          if (mapped) {
+            if (mapped.classe?.nome) process.classe = mapped.classe;
+            if (mapped.assuntos?.length) process.assuntos = mapped.assuntos;
+            if (mapped.orgaoJulgador?.nome) process.orgaoJulgador = mapped.orgaoJulgador;
+            if (mapped.partes?.length) process.partes = mapped.partes;
+            if (mapped.movimentos?.length) process.movimentos = mapped.movimentos;
+            if (mapped.dataAjuizamento) process.dataAjuizamento = mapped.dataAjuizamento;
+            if (mapped.dataHoraUltimaAtualizacao) process.dataHoraUltimaAtualizacao = mapped.dataHoraUltimaAtualizacao;
+            process.lastChecked = new Date().toISOString();
+            process.hasUpdate = true;
+            await ProcessService.update(process);
+            showToast('Dados atualizados com sucesso do Datajud!');
+            openProcessDetails(process);
+            return;
+          }
+        }
+        showToast('Não foi possível buscar dados do Datajud para este processo.');
+      } catch (e) {
+        showToast('Erro ao sincronizar: ' + e.message);
+      } finally {
+        cloneRefresh.disabled = false;
+        cloneRefresh.innerHTML = '<span class="material-symbols-rounded">sync</span><span>Recarregar Dados do Datajud</span>';
+      }
     });
   }
 
@@ -2569,43 +2602,6 @@ function renderPdfStatusCard(process) {
 }
 
 // Atualiza a visualização interna da aba AI de acordo com o estado do processo e PDF
-function renderAIAnalysisTab() {
-  const emptyState = document.getElementById('ai-empty-state');
-  const loadingState = document.getElementById('ai-loading-state');
-  const resultState = document.getElementById('ai-result-state');
-
-  // SE NÃO HOUVER PDF, BLOQUEIA TOTAL A ANÁLISE POR IA
-  if (!activeProcess.pdfText) {
-    emptyState.style.display = 'flex';
-    loadingState.style.display = 'none';
-    resultState.style.display = 'none';
-
-    emptyState.querySelector('h4').textContent = "⚠️ Cópia em PDF Necessária";
-    emptyState.querySelector('p').textContent = "Para realizar a análise jurídica por inteligência artificial (inclusive prazos CPC), você deve anexar o arquivo PDF do processo na aba Resumo primeiro. A IA lerá o conteúdo integral do arquivo anexado.";
-    emptyState.querySelector('#btn-generate-ai-analysis').style.display = 'none'; // esconde botão
-    return;
-  }
-
-  emptyState.querySelector('#btn-generate-ai-analysis').style.display = 'inline-flex';
-  emptyState.querySelector('h4').textContent = "Análise Jurídica por IA (Expert)";
-  emptyState.querySelector('p').textContent = "O Gemini lerá o texto completo extraído do seu arquivo PDF para elaborar o resumo do caso, histórico da perícia, e monitoramento de prazos processuais (CPC).";
-
-  if (activeProcess.aiAnalysis) {
-    emptyState.style.display = 'none';
-    loadingState.style.display = 'none';
-    resultState.style.display = 'block';
-
-    document.getElementById('ai-analysis-text').innerHTML = parseMarkdown(activeProcess.aiAnalysis);
-    
-    const d = activeProcess.aiAnalysisDate ? new Date(activeProcess.aiAnalysisDate).toLocaleString('pt-BR') : '';
-    document.getElementById('ai-analysis-date').textContent = d ? `Análise realizada em: ${d}` : 'Data indisponível';
-  } else {
-    emptyState.style.display = 'flex';
-    loadingState.style.display = 'none';
-    resultState.style.display = 'none';
-  }
-}
-
 /* ==========================================================================
    SINCRONIZAÇÃO AUTOMÁTICA EM SEGUNDO PLANO (SILENCIOSA)
    ========================================================================== */
@@ -2617,37 +2613,55 @@ async function syncSingleProcessSilently(processNumber) {
     const index = list.findIndex(p => p.numeroProcesso === processNumber);
     if (index === -1) return;
     const proc = list[index];
+    if (proc.archived) return; // Pula processos arquivados!
 
     const cleanCNJ = processNumber.replace(/[^0-9]/g, '');
     const courtAlias = detectCourtFromCNJ(cleanCNJ);
     if (!courtAlias) return;
 
+    let wildcardPattern = cleanCNJ;
+    if (cleanCNJ.length === 20) {
+      const pN = cleanCNJ.substring(0, 7);
+      const pD = cleanCNJ.substring(7, 9);
+      const pA = cleanCNJ.substring(9, 13);
+      const pJ = cleanCNJ.substring(13, 14);
+      const pT = cleanCNJ.substring(14, 16);
+      const pO = cleanCNJ.substring(16, 20);
+      wildcardPattern = `*${pN}*${pD}*${pA}*${pJ}*${pT}*${pO}*`;
+    } else {
+      wildcardPattern = `*${cleanCNJ}*`;
+    }
+
     const query = {
       "size": 1,
       "query": {
-        "match": {
-          "numeroProcesso": cleanCNJ
+        "wildcard": {
+          "numeroProcesso": wildcardPattern
         }
       }
     };
 
-    const response = await authFetch('/api/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': customApiKey
-      },
-      body: JSON.stringify({
-        tribunal: courtAlias,
-        query: query,
-        timeout: 25000 // Limite de 25 segundos para tolerar API lenta do Datajud
-      })
-    });
-
-    if (!response.ok) return; // Falha silenciosamente em caso de instabilidade na API pública
-
-    const data = await response.json();
-    const hits = data.hits?.hits || [];
+    let hits = [];
+    const mockHits = getMockSearchHits(cleanCNJ);
+    if (mockHits) {
+      hits = mockHits;
+    } else {
+      const response = await authFetch('/api/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ''
+        },
+        body: JSON.stringify({
+          tribunal: courtAlias,
+          query: query,
+          timeout: 25000 // Limite de 25 segundos para tolerar API lenta do Datajud
+        })
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      hits = data.hits?.hits || [];
+    }
 
     if (hits.length > 0) {
       const updatedProc = mapDatajudProcess(hits[0], courtAlias);
@@ -2656,6 +2670,7 @@ async function syncSingleProcessSilently(processNumber) {
       const localMovs = proc.movimentos?.length || 0;
 
       if (apiUpdate !== proc.dataHoraUltimaAtualizacao || apiMovs > localMovs) {
+        const oldMovsCount = localMovs;
         proc.dataHoraUltimaAtualizacao = apiUpdate;
         proc.movimentos = updatedProc.movimentos;
         proc.hasUpdate = true;
@@ -2699,6 +2714,132 @@ async function syncSingleProcessSilently(processNumber) {
   }
 }
 
+// Sincroniza ativamente e manualmente um processo pelo botão na tela com feedback visual
+async function syncSingleProcessManually(processNumber, btnEl) {
+  if (!btnEl) return;
+  const originalHtml = btnEl.innerHTML;
+  btnEl.disabled = true;
+  btnEl.innerHTML = '<span class="material-symbols-rounded spinner" style="font-size: 16px; animation: spin 1.5s linear infinite; display: inline-block;">sync</span><span>Sincronizando...</span>';
+
+  try {
+    const list = await ProcessService.getProcesses();
+    const index = list.findIndex(p => p.numeroProcesso === processNumber);
+    if (index === -1) throw new Error('Processo não localizado no banco de dados local.');
+    const proc = list[index];
+
+    const cleanCNJ = processNumber.replace(/[^0-9]/g, '');
+    const courtAlias = detectCourtFromCNJ(cleanCNJ);
+    if (!courtAlias) throw new Error('Não foi possível identificar o tribunal a partir do número do CNJ.');
+
+    let wildcardPattern = cleanCNJ;
+    if (cleanCNJ.length === 20) {
+      const pN = cleanCNJ.substring(0, 7);
+      const pD = cleanCNJ.substring(7, 9);
+      const pA = cleanCNJ.substring(9, 13);
+      const pJ = cleanCNJ.substring(13, 14);
+      const pT = cleanCNJ.substring(14, 16);
+      const pO = cleanCNJ.substring(16, 20);
+      wildcardPattern = `*${pN}*${pD}*${pA}*${pJ}*${pT}*${pO}*`;
+    } else {
+      wildcardPattern = `*${cleanCNJ}*`;
+    }
+
+    const query = {
+      "size": 50,
+      "query": {
+        "wildcard": {
+          "numeroProcesso": wildcardPattern
+        }
+      }
+    };
+
+    let hits = [];
+    const mockHits = getMockSearchHits(cleanCNJ);
+    if (mockHits) {
+      hits = mockHits;
+    } else {
+      const response = await authFetch('/api/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ''
+        },
+        body: JSON.stringify({
+          tribunal: courtAlias,
+          query: query,
+          timeout: 25000
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || data.details || 'Falha ao se comunicar com o Datajud.');
+      }
+      hits = data.hits?.hits || [];
+    }
+
+    if (hits.length === 0) {
+      throw new Error(`Processo não localizado no banco do tribunal ${courtAlias.toUpperCase()}. Anexe o PDF do processo para consultar manualmente.`);
+    }
+
+    const updatedProc = mapDatajudProcess(hits[0], courtAlias);
+    const apiUpdate = updatedProc.dataHoraUltimaAtualizacao;
+    
+    proc.dataHoraUltimaAtualizacao = apiUpdate;
+    proc.movimentos = updatedProc.movimentos;
+    proc.lastChecked = new Date().toISOString();
+    proc.hasUpdate = false; // Usuário está ativamente sincronizando e visualizando, zera flag
+
+    await ProcessService.update(proc);
+    
+    // Atualiza o modal aberto se for o mesmo processo
+    if (activeProcess && activeProcess.numeroProcesso === processNumber) {
+      activeProcess = proc;
+      
+      const lastMov = proc.movimentos?.[0];
+      if (lastMov) {
+        document.getElementById('modal-last-movement-desc').textContent = lastMov.detalhes || lastMov.nome || '-';
+        document.getElementById('modal-last-movement-date').textContent = new Date(lastMov.dataHora).toLocaleString('pt-BR');
+      }
+      
+      document.getElementById('modal-mov-count').textContent = proc.movimentos.length;
+      const timeline = document.getElementById('modal-timeline');
+      if (timeline) {
+        timeline.innerHTML = '';
+        proc.movimentos.forEach(mov => {
+          const item = document.createElement('div');
+          item.className = 'timeline-item';
+          item.innerHTML = `
+            <div class="timeline-dot"></div>
+            <div class="timeline-content">
+              <span class="timeline-date">${new Date(mov.dataHora).toLocaleString('pt-BR')}</span>
+              <span class="timeline-desc">${mov.nome}</span>
+              ${mov.detalhes ? `<p class="timeline-details">${mov.detalhes}</p>` : ''}
+            </div>
+          `;
+          timeline.appendChild(item);
+        });
+      }
+      
+      const lblChecked = document.getElementById('modal-last-checked-label');
+      if (lblChecked) {
+        lblChecked.textContent = `Última busca: ${new Date(proc.lastChecked).toLocaleString('pt-BR')}`;
+      }
+      
+      renderPdfStatusCard(proc);
+    }
+    
+    await renderDashboard();
+    showToast('Processo sincronizado e histórico de movimentações atualizado!', 5000);
+  } catch (err) {
+    console.error('[Manual-Sync] Erro ao sincronizar processo:', err);
+    showToast(`Erro na sincronização: ${err.message}`, 6000);
+  } finally {
+    btnEl.disabled = false;
+    btnEl.innerHTML = originalHtml;
+  }
+}
+
 // Busca atualizações para todos os processos monitorados em segundo plano (na inicialização)
 async function syncAllMonitoredSilently() {
   const processes = await ProcessService.getProcesses();
@@ -2708,6 +2849,7 @@ async function syncAllMonitoredSilently() {
   
   // Faz a varredura sequencial para não sobrecarregar as requisições
   for (const proc of processes) {
+    if (proc.archived) continue; // Pula processos arquivados!
     await syncSingleProcessSilently(proc.numeroProcesso);
     // Pequeno intervalo entre requisições
     await new Promise(r => setTimeout(r, 1000));
@@ -2717,281 +2859,13 @@ async function syncAllMonitoredSilently() {
 }
 
 /* ==========================================================================
-   INTEGRAÇÃO COM A API DO GEMINI (ANÁLISE POR IA BASEADA EM PDF)
-   ========================================================================== */
-
-async function generateAIAnalysis() {
-  if (!activeProcess || !activeProcess.pdfText) {
-    showToast('Anexe o arquivo PDF primeiro na aba Resumo.');
-    return;
-  }
-
-  const emptyState = document.getElementById('ai-empty-state');
-  const loadingState = document.getElementById('ai-loading-state');
-  const resultState = document.getElementById('ai-result-state');
-  const statusText = document.getElementById('ai-loading-status-text');
-
-  emptyState.style.display = 'none';
-  resultState.style.display = 'none';
-  loadingState.style.display = 'flex';
-
-  const statusMessages = [
-    "Lendo arquivo PDF do processo...",
-    "Localizando a qualificação do expert...",
-    "Filtrando quesitos e nomeações de assistentes...",
-    "Calculando e cruzando prazos processuais (CPC)...",
-    "Estruturando parecer da inteligência artificial...",
-    "Formatando parecer jurídico em Markdown..."
-  ];
-
-  let msgIdx = 0;
-  statusText.textContent = statusMessages[0];
-  const timer = setInterval(() => {
-    msgIdx = (msgIdx + 1) % statusMessages.length;
-    statusText.textContent = statusMessages[msgIdx];
-  }, 1800);
-
-  try {
-    const payload = {
-      numeroProcesso: activeProcess.numeroProcesso,
-      pdfText: activeProcess.pdfText
-    };
-
-    const response = await authFetch('/api/analyze-process', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-gemini-key': geminiApiKey
-      },
-      body: JSON.stringify({
-        processData: payload
-      })
-    });
-
-    clearInterval(timer);
-
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.details || err.error || 'Erro interno na chamada do Gemini.');
-    }
-
-    const result = await response.json();
-    
-    activeProcess.aiAnalysis = result.analysis;
-    activeProcess.aiAnalysisDate = new Date().toISOString();
-
-    if (!activeProcess.expertInfo) {
-      activeProcess.expertInfo = {};
-    }
-    const expert = activeProcess.expertInfo;
-
-    if (result.perito && result.perito !== 'Não nomeado') {
-      expert.perito = result.perito;
-    }
-    if (!expert.perito || expert.perito === 'Não nomeado') {
-      expert.perito = result.perito || 'Não nomeado';
-    }
-
-    if (result.inversaoOnus && result.inversaoOnus !== 'Não informado') {
-      expert.inversaoOnus = result.inversaoOnus;
-    } else {
-      const m = (result.analysis || '').match(/invers[ãa]o.*?\b(sim|n[ãa]o)\b/i);
-      if (m) {
-        expert.inversaoOnus = m[1].toLowerCase().startsWith('s') ? 'Sim' : 'Não';
-      }
-    }
-
-    if (result.justicaGratuita && result.justicaGratuita !== 'Não informado') {
-      expert.justicaGratuita = result.justicaGratuita;
-    } else {
-      const m = (result.analysis || '').match(/justi[çc]a gratuita.*?\b( concedid[ao]|sim|n[ãa]o)\b/i);
-      if (m) {
-        if (/concedid|sim/i.test(m[1])) expert.justicaGratuita = 'Sim';
-        else expert.justicaGratuita = 'Não';
-      }
-    }
-
-    if (result.cidadeEstado && result.cidadeEstado !== 'Não localizado') {
-      expert.cidadeEstado = result.cidadeEstado;
-    }
-    if (result.autor && result.autor !== 'Não localizado') {
-      expert.autor = result.autor;
-    }
-    if (result.reu && result.reu !== 'Não localizado') {
-      expert.reu = result.reu;
-    }
-    if (result.objetoPericia && result.objetoPericia !== 'Não localizado') {
-      expert.objetoPericia = result.objetoPericia;
-    }
-
-    let honorariosVal = parseFloat(result.honorarios);
-    if (isNaN(honorariosVal) || honorariosVal <= 0) {
-      const m = (result.analysis || '').match(/honor[áa]rios[^0-9]{0,80}R?\$?\s*([\d\.]+,\d{2}|\d{3,})/i);
-      if (m) {
-        honorariosVal = parseFloat(m[1].replace(/\./g, '').replace(',', '.'));
-      }
-    }
-    if (!isNaN(honorariosVal) && honorariosVal > 0) {
-      expert.honorarios = honorariosVal;
-    }
-
-    let ufespVal = parseFloat(result.honorariosUfesp);
-    if (isNaN(ufespVal) || ufespVal <= 0) {
-      const m = (result.analysis || '').match(/(\d+(?:[.,]\d+)?)\s*ufesp/i);
-      if (m) ufespVal = parseFloat(m[1].replace(',', '.'));
-    }
-    if (!isNaN(ufespVal) && ufespVal > 0) {
-      expert.honorariosUfesp = ufespVal;
-    }
-
-    if (result.depositoJudicial && result.depositoJudicial !== 'Não informado') {
-      expert.depositoJudicial = result.depositoJudicial;
-    } else {
-      const text = (result.analysis || '').toLowerCase();
-      if (text.includes('depósito realizado') || text.includes('deposito realizado') || text.includes('depósito efetuad')) {
-        expert.depositoJudicial = 'Sim';
-      } else if (text.includes('sem depósito') || text.includes('depósito pendente')) {
-        expert.depositoJudicial = 'Não';
-      }
-    }
-
-    if (result.dataHonorarios && result.dataHonorarios !== null) {
-      expert.dataHonorarios = result.dataHonorarios;
-    }
-    if (result.dataDeposito && result.dataDeposito !== null) {
-      expert.dataDeposito = result.dataDeposito;
-    }
-    if (result.resumoProcesso && result.resumoProcesso !== 'Não localizado') {
-      expert.resumoProcesso = result.resumoProcesso;
-    }
-
-    if (result.classeProcessual) {
-      activeProcess.classe = activeProcess.classe || {};
-      activeProcess.classe.nome = result.classeProcessual;
-    }
-    if (result.assuntoPrincipal) {
-      activeProcess.assuntos = activeProcess.assuntos || [];
-      if (!activeProcess.assuntos.some(a => a.nome === result.assuntoPrincipal)) {
-        activeProcess.assuntos.unshift({ nome: result.assuntoPrincipal });
-      }
-    }
-    if (result.orgaoJulgador) {
-      activeProcess.orgaoJulgador = activeProcess.orgaoJulgador || {};
-      activeProcess.orgaoJulgador.nome = result.orgaoJulgador;
-    }
-    if (result.ultimaMovimentacao) {
-      activeProcess.movimentos = activeProcess.movimentos || [];
-      activeProcess.movimentos.unshift({
-        nome: 'Última Movimentação (IA)',
-        dataHora: new Date().toISOString(),
-        detalhes: result.ultimaMovimentacao
-      });
-    }
-    if (result.valorCausa !== null && result.valorCausa !== undefined) {
-      activeProcess.valorCausa = parseFloat(result.valorCausa);
-    }
-
-    if (Array.isArray(result.todasPartes) && result.todasPartes.length > 0) {
-      activeProcess.partes = result.todasPartes.map(p => ({
-        nome: p.nome,
-        polo: p.polo === 'PASSIVO' ? 'PASSIVO' : 'ATIVO',
-        tipo: 'Não informada'
-      }));
-    } else {
-      activeProcess.partes = activeProcess.partes || [];
-      if (result.autor && result.autor !== 'Não localizado' && result.autor !== 'Autor Não Informado') {
-        let activeParty = activeProcess.partes.find(p => p.polo === 'ATIVO');
-        if (activeParty) {
-          activeParty.nome = result.autor;
-        } else {
-          activeProcess.partes.push({ nome: result.autor, polo: 'ATIVO', tipo: 'Não informada' });
-        }
-      }
-      if (result.reu && result.reu !== 'Não localizado' && result.reu !== 'Réu Não Informado') {
-        let passiveParty = activeProcess.partes.find(p => p.polo === 'PASSIVO');
-        if (passiveParty) {
-          passiveParty.nome = result.reu;
-        } else {
-          activeProcess.partes.push({ nome: result.reu, polo: 'PASSIVO', tipo: 'Não informada' });
-        }
-      }
-    }
-
-    // Converte os prazos forenses calculados pela IA em tarefas do perito
-    if (result.deadlines && Array.isArray(result.deadlines)) {
-      activeProcess.tasks = result.deadlines.map((d, index) => ({
-        id: `task-${Date.now()}-${index}`,
-        title: d.title,
-        date: d.date,
-        description: d.description,
-        cpcArticle: d.cpcArticle,
-        completed: false,
-        source: 'ia'
-      }));
-    } else {
-      activeProcess.tasks = [];
-    }
-
-    await ProcessService.update(activeProcess);
-    await renderDashboard();
-    renderExpertInfoCard(activeProcess);
-    renderAIAnalysisTab();
-    if (typeof renderProcessModalHeader === 'function') renderProcessModalHeader(activeProcess);
-    if (typeof refreshPartesEnvolvidas === 'function') refreshPartesEnvolvidas(activeProcess);
-
-    showToast('Análise baseada no PDF concluída com sucesso!');
-  } catch (err) {
-    clearInterval(timer);
-    console.error(err);
-    
-    if (err.message.includes('Chave de API do Gemini não configurada') || err.message.includes('Chave do Gemini não configurada')) {
-      showToast('Chave de API do Gemini não configurada. Insira sua chave nas Configurações da aplicação.', 6000);
-      // Abre automaticamente o diálogo de configurações após um breve atraso para ajudar o usuário!
-      setTimeout(() => openDialog('settings-dialog'), 1200);
-    } else {
-      showToast(`Falha na análise por IA: ${err.message}`, 5000);
-    }
-    
-    emptyState.style.display = 'flex';
-    loadingState.style.display = 'none';
-    resultState.style.display = 'none';
-  }
-}
-
-// Copiar parecer de IA
-function copyAIAnalysisText() {
-  if (!activeProcess || !activeProcess.aiAnalysis) return;
-  
-  navigator.clipboard.writeText(activeProcess.aiAnalysis)
-    .then(() => showToast('Parecer jurídico copiado para a área de transferência.'))
-    .catch(err => {
-      console.error('Erro ao copiar:', err);
-      showToast('Não foi possível copiar o texto automaticamente.');
-    });
-}
-
-/* ==========================================================================
    CONFIGURAÇÕES: SALVAR, EXPORTAR E IMPORTAR
    ========================================================================== */
 
 async function saveSettings() {
-  const dKey = document.getElementById('settings-datajud-key').value.trim();
-  const gKey = document.getElementById('settings-gemini-key').value.trim();
   const sUrl = document.getElementById('settings-supabase-url').value.trim();
   const sAnon = document.getElementById('settings-supabase-anon-key').value.trim();
   const sBucket = document.getElementById('settings-supabase-bucket').value.trim();
-
-  customApiKey = dKey;
-  localStorage.setItem('datajud_api_key', dKey);
-
-  // Se o campo estiver em branco, remove do localStorage (fallback para o valor global padrão)
-  if (gKey) {
-    geminiApiKey = gKey;
-    localStorage.setItem('gemini_api_key', gKey);
-  } else {
-    geminiApiKey = DEFAULT_GEMINI_API_KEY;
-    localStorage.removeItem('gemini_api_key');
-  }
 
   if (sUrl) {
     supabaseUrl = sUrl;
@@ -3130,109 +3004,6 @@ function showToast(message, duration = 3500) {
     toast.style.transition = 'opacity 0.3s ease';
     setTimeout(() => toast.remove(), 300);
   }, duration);
-}
-
-// Interpretador simples de markdown jurídico com suporte a tabelas
-function parseMarkdown(text) {
-  if (!text) return '';
-  const lines = text.split('\n');
-  let html = '';
-  let inList = false;
-  let inBlockquote = false;
-  let inTable = false;
-
-  for (let line of lines) {
-    line = line.trim();
-    if (!line) {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
-      if (inTable) { html += '</tbody></table>'; inTable = false; }
-      continue;
-    }
-
-    // Tabela em Markdown
-    if (line.startsWith('|')) {
-      if (inList) { html += '</ul>'; inList = false; }
-      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
-      
-      const cells = line.split('|').map(c => c.trim()).filter((c, i, arr) => i > 0 && i < arr.length - 1);
-      
-      if (line.includes('---') || line.includes('===') || cells.every(c => c.match(/^[:\-]+$/))) {
-        continue;
-      }
-      
-      if (!inTable) {
-        html += '<table><thead><tr>';
-        cells.forEach(c => {
-          html += `<th>${c}</th>`;
-        });
-        html += '</tr></thead><tbody>';
-        inTable = true;
-      } else {
-        html += '<tr>';
-        cells.forEach(c => {
-          html += `<td>${c}</td>`;
-        });
-        html += '</tr>';
-      }
-      continue;
-    } else {
-      if (inTable) { html += '</tbody></table>'; inTable = false; }
-    }
-
-    // Alertas (blockquote)
-    if (line.startsWith('>')) {
-      if (!inBlockquote) {
-        if (inList) { html += '</ul>'; inList = false; }
-        html += '<blockquote>';
-        inBlockquote = true;
-      }
-      line = line.substring(1).trim();
-    } else {
-      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
-    }
-
-    // Headings
-    if (line.startsWith('###')) {
-      if (inList) { html += '</ul>'; inList = false; }
-      html += `<h3>${line.substring(3).trim()}</h3>`;
-    } else if (line.startsWith('##')) {
-      if (inList) { html += '</ul>'; inList = false; }
-      html += `<h2>${line.substring(2).trim()}</h2>`;
-    } else if (line.startsWith('#')) {
-      if (inList) { html += '</ul>'; inList = false; }
-      html += `<h1>${line.substring(1).trim()}</h1>`;
-    }
-    // Listas
-    else if (line.startsWith('-') || line.startsWith('*')) {
-      if (!inList) {
-        html += '<ul>';
-        inList = true;
-      }
-      html += `<li>${line.substring(1).trim()}</li>`;
-    }
-    // Parágrafos
-    else {
-      if (inList) { html += '</ul>'; inList = false; }
-      html += `<p>${line}</p>`;
-    }
-  }
-
-  if (inList) html += '</ul>';
-  if (inBlockquote) html += '</blockquote>';
-  if (inTable) html += '</tbody></table>';
-
-  // Negrito e Itálico
-  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-  
-  // Iconização
-  html = html.replace(/📋/g, '<span class="material-symbols-rounded" style="vertical-align: middle; margin-right: 4px; color: var(--md-sys-color-primary);">assignment</span>');
-  html = html.replace(/⚖️/g, '<span class="material-symbols-rounded" style="vertical-align: middle; margin-right: 4px; color: var(--md-sys-color-primary);">gavel</span>');
-  html = html.replace(/⚠️/g, '<span class="material-symbols-rounded" style="vertical-align: middle; margin-right: 4px; color: var(--md-sys-color-error);">warning</span>');
-  html = html.replace(/🚀/g, '<span class="material-symbols-rounded" style="vertical-align: middle; margin-right: 4px; color: var(--md-sys-color-success);">rocket_launch</span>');
-
-  return html;
 }
 
 /* ==========================================================================
@@ -3383,7 +3154,7 @@ function renderTasksList() {
       <div class="empty-state" style="padding: 20px 0;">
         <span class="material-symbols-rounded empty-icon" style="font-size: 36px;">checklist</span>
         <h4 style="font-size: 13px;">Nenhuma tarefa gerada</h4>
-        <p style="font-size: 11px; max-width: 250px;">Gere a Análise por IA na aba ao lado para carregar os prazos do PDF ou adicione uma tarefa manual.</p>
+        <p style="font-size: 11px; max-width: 250px;">Adicione uma tarefa manual para acompanhar prazos importantes.</p>
       </div>
     `;
     return;
@@ -3706,7 +3477,7 @@ async function handleBatchImport() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': customApiKey
+        'x-api-key': ''
       },
       body: JSON.stringify({
         tribunal: courtAlias,
@@ -4190,7 +3961,7 @@ async function performRadarScan() {
       headers: {
         'Authorization': `Bearer ${jwtToken}`,
         'Content-Type': 'application/json',
-        'x-api-key': customApiKey
+        'x-api-key': ''
       }
     });
 
@@ -4442,5 +4213,482 @@ async function renderRadarDashboard() {
         Erro ao carregar o radar de nomeações: ${err.message}
       </div>
     `;
+  }
+}
+
+/* ==========================================================================
+   ANÁLISE DE PROCESSOS COM IA (GROQ)
+   ========================================================================== */
+
+async function callAIApi(prompt) {
+  console.log('[AI] Enviando prompt para Groq. Tamanho:', prompt.length);
+
+  const response = await fetch(AI_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${AI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: AI_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2
+    })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Erro na API (${response.status}): ${errText}`);
+  }
+
+  const data = await response.json();
+  console.log('[AI] Resposta bruta da Groq:', data);
+
+  const text = data?.choices?.[0]?.message?.content;
+  if (!text) throw new Error('Resposta vazia da IA.');
+
+  console.log('[AI] Conteúdo da resposta:', text.substring(0, 200));
+
+  let jsonStr = text.trim();
+
+  if (jsonStr.startsWith('```')) {
+    const lines = jsonStr.split('\n');
+    if (lines[0].trim().startsWith('```')) lines.shift();
+    if (lines.length > 0 && lines[lines.length - 1].trim() === '```') lines.pop();
+    jsonStr = lines.join('\n').trim();
+  }
+
+  const parsed = JSON.parse(jsonStr);
+  console.log('[AI] JSON parseado:', parsed);
+
+  if (!parsed.summary) parsed.summary = '';
+  if (!parsed.fields) parsed.fields = {};
+  if (!Array.isArray(parsed.tasks)) parsed.tasks = [];
+  return parsed;
+}
+
+function buildAIPrompt(proc) {
+  const expert = proc.expertInfo || {};
+  const tasks = proc.tasks || [];
+
+  // Constrói lista completa de movimentações
+  const movimentosStr = (proc.movimentos || []).map((m, i) => {
+    const data = m.dataHora ? new Date(m.dataHora).toLocaleString('pt-BR') : 'data não informada';
+    return `  ${i+1}. [${data}] ${m.nome}${m.detalhes ? ' - ' + m.detalhes : ''}`;
+  }).join('\n');
+
+  // Constrói lista completa de partes
+  const partesStr = (proc.partes || []).map(p => {
+    return `  - ${p.nome} (${p.polo === 'ATIVO' ? 'Requerente' : 'Requerido'}, ${p.tipo || 'N/I'})`;
+  }).join('\n');
+
+  // Assuntos
+  const assuntosStr = (proc.assuntos || []).map(a => a.nome).join(', ');
+
+  // Expert info completa
+  let expertStr = '';
+  if (expert.autor) expertStr += `\n- Autor: ${expert.autor}`;
+  if (expert.reu) expertStr += `\n- Réu: ${expert.reu}`;
+  if (expert.perito) expertStr += `\n- Perito: ${expert.perito}`;
+  if (expert.justicaGratuita) expertStr += `\n- Justiça Gratuita: ${expert.justicaGratuita}`;
+  if (expert.cidadeEstado) expertStr += `\n- Comarca: ${expert.cidadeEstado}`;
+  if (expert.objetoPericia) expertStr += `\n- Objeto da Perícia: ${expert.objetoPericia}`;
+  if (expert.inversaoOnus) expertStr += `\n- Inversão do Ônus: ${expert.inversaoOnus}`;
+  if (expert.honorarios) expertStr += `\n- Honorários: ${expert.honorarios}`;
+  if (expert.depositoJudicial) expertStr += `\n- Depósito Judicial: ${expert.depositoJudicial}`;
+  if (expert.resumoProcesso) expertStr += `\n- Resumo do Processo: ${expert.resumoProcesso}`;
+
+  const pdfText = proc.pdfText ? proc.pdfText.substring(0, 12000) : '';
+
+  return `Você é um assistente jurídico especializado em direito processual civil brasileiro (CPC). Sua função é EXTRAIR dados do PDF do processo anexado abaixo.
+
+INSTRUÇÕES IMPORTANTES:
+- LEIA ATENTAMENTE TODO O TEXTO DO PDF extraído abaixo
+- Extraia o nome COMPLETO do autor/requerente e do réu/requerido
+- Identifique a classe processual exata (ex: "Procedimento Comum Cível", "Execução de Título Extrajudicial", etc.)
+- Identifique o assunto principal do processo
+- Identifique o órgão julgador (vara, comarca)
+- Analise as movimentações e datas mencionadas no PDF
+- Crie um resumo detalhado baseado no conteúdo do PDF
+- Se houver menção a perícia, crie tarefas pertinentes
+
+PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
+{
+  "summary": "resumo detalhado em 3-6 frases extraído do PDF, cobrindo partes, objeto, estágio atual e próximos passos processuais",
+  "fields": {
+    "autor": "nome completo do autor/requerente extraído do PDF (ou 'Não informado' se não encontrado)",
+    "reu": "nome completo do réu/requerido extraído do PDF (ou 'Não informado' se não encontrado)",
+    "classe": "classe processual extraída do PDF (ou 'Não informada' se não encontrada)",
+    "assunto": "assunto principal extraído do PDF (ou 'Não informado' se não encontrado)",
+    "orgao": "órgão julgador extraído do PDF (ou 'Não informado' se não encontrado)"
+  },
+  "tasks": [
+    {
+      "title": "título claro da tarefa",
+      "description": "descrição detalhada com base no CPC",
+      "deadline_days": 5,
+      "cpc_article": "465"
+    }
+  ]
+}
+
+REGRAS:
+- PRIORIDADE MÁXIMA: Extraia os campos do TEXTO DO PDF abaixo. Leia o PDF com atenção.
+- Preencha "fields" APENAS com dados extraídos do PDF. Se o dado não estiver no PDF nem nos dados abaixo, use "Não informado".
+- Crie tarefas pertinentes ao perito judicial se houver menção a perícia no PDF.
+- Prazos típicos do CPC: art.465 (5 dias), art.466 (prazo para laudo), art.468 (15 dias para assistente técnico), art.477 (prazo para impugnação).
+- NÃO duplique tarefas existentes.
+- Se NÃO houver task relevante, retorne array vazio.
+
+DADOS COMPLETOS DO PROCESSO:
+- Número: ${proc.numeroProcesso}
+- Tribunal: ${proc.tribunal || 'N/I'}
+- Grau: ${proc.grau || 'N/I'}
+- Órgão Julgador: ${proc.orgaoJulgador?.nome || 'N/I'}
+- Classe: ${proc.classe?.nome || 'N/I'} (código: ${proc.classe?.codigo || 'N/I'})
+- Assuntos: ${assuntosStr || 'N/I'}
+- Data de Ajuizamento: ${proc.dataAjuizamento ? new Date(proc.dataAjuizamento).toLocaleDateString('pt-BR') : 'N/I'}
+- Última Atualização: ${proc.dataHoraUltimaAtualizacao ? new Date(proc.dataHoraUltimaAtualizacao).toLocaleString('pt-BR') : 'N/I'}
+- Formato: ${proc.formato?.nome || 'N/I'}
+
+FICHA TÉCNICA DO PERITO:${expertStr || '\n- Nenhum dado cadastrado'}
+
+PARTES DO PROCESSO:
+${partesStr || '  Nenhuma parte cadastrada'}
+
+MOVIMENTAÇÕES DO PROCESSO (${(proc.movimentos || []).length} no total):
+${movimentosStr || '  Nenhuma movimentação'}
+
+${pdfText ? `\n=== TEXTO COMPLETO EXTRAÍDO DO PDF DO PROCESSO (USE ESTE TEXTO PARA EXTRAIR OS DADOS) ===\n${pdfText}\n=== FIM DO TEXTO DO PDF ===\n` : '\n(Nenhum PDF anexado a este processo)\n'}
+
+TAREFAS EXISTENTES NO SISTEMA:
+${tasks.length ? JSON.stringify(tasks.map(t => ({ title: t.title, description: t.description, cpcArticle: t.cpcArticle })), null, 2) : 'Nenhuma'}
+
+INSTRUÇÃO FINAL: Analise TODO o conteúdo acima. Se o PDF estiver presente, USE-O como fonte principal para extrair autor, réu, classe, assunto, órgão julgador e movimentações. Se não houver PDF, use os dados cadastrados. Retorne SOMENTE o JSON, sem formatação extra.`;
+}
+
+function renderAIAnalysis() {
+  const container = document.getElementById('ai-analysis-container');
+  if (!container || !activeProcess) return;
+
+  const cached = activeProcess.__aiResult;
+
+  if (cached) {
+    renderAIResult(cached, container);
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="ai-empty-state">
+      <span class="material-symbols-rounded" style="font-size: 50px; color: #7c3aed;">smart_toy</span>
+      <h4>Análise com IA Generativa</h4>
+      <p>Complete automaticamente os dados do processo, gere um resumo e crie tarefas com prazos baseados no CPC.</p>
+      <button class="btn-ai-generate" id="btn-ai-start">
+        <span class="material-symbols-rounded">auto_fix_high</span>
+        Gerar Análise
+      </button>
+      <div class="ai-tech-message">Powered by Groq AI</div>
+    </div>
+  `;
+
+  document.getElementById('btn-ai-start')?.addEventListener('click', performAIAnalysis);
+}
+
+async function performAIAnalysis() {
+  const container = document.getElementById('ai-analysis-container');
+  if (!container || !activeProcess) return;
+
+  container.innerHTML = `
+    <div class="ai-loading">
+      <span class="ai-loading-spinner material-symbols-rounded">progress_activity</span>
+      <p>Buscando dados atualizados do processo na API Datajud...</p>
+    </div>
+  `;
+
+  let datajudFetched = false;
+
+  try {
+    // PASSO 1: Tenta buscar dados atualizados do Datajud antes de analisar
+    const cleanCNJ = activeProcess.numeroProcesso.replace(/[^0-9]/g, '');
+    if (cleanCNJ.length === 20) {
+      try {
+        const courtAlias = detectCourtFromCNJ(cleanCNJ);
+        if (courtAlias) {
+          // Formata o CNJ no padrão do Datajud: NNNNNNN-DD.AAAA.J.TR.OOOO
+          const formattedCNJ = `${cleanCNJ.substring(0,7)}-${cleanCNJ.substring(7,9)}.${cleanCNJ.substring(9,13)}.${cleanCNJ.substring(13,14)}.${cleanCNJ.substring(14,16)}.${cleanCNJ.substring(16,20)}`;
+          console.log('[AI] Buscando CNJ formatado:', formattedCNJ);
+
+          // Query match_phrase (busca exata por frase, respeita tokens)
+          const query = { size: 1, query: { match_phrase: { numeroProcesso: formattedCNJ } } };
+
+          const resp = await authFetch('/api/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': '' },
+            body: JSON.stringify({ tribunal: courtAlias, query, timeout: 30000 })
+          });
+
+          console.log('[AI] Datajud status:', resp.status);
+          if (resp.ok) {
+            const data = await resp.json();
+            const hits = data.hits?.hits || [];
+            console.log('[AI] Hits:', hits.length);
+            if (hits.length > 0) {
+              const mapped = mapDatajudProcess(hits[0], courtAlias);
+              if (mapped.classe?.nome) activeProcess.classe = mapped.classe;
+              if (mapped.assuntos?.length) activeProcess.assuntos = mapped.assuntos;
+              if (mapped.orgaoJulgador?.nome) activeProcess.orgaoJulgador = mapped.orgaoJulgador;
+              if (mapped.partes?.length) {
+                activeProcess.partes = mapped.partes;
+                if (!activeProcess.expertInfo) activeProcess.expertInfo = {};
+                const ativos = mapped.partes.filter(p => p.polo === 'ATIVO').map(p => p.nome).join(', ');
+                const passivos = mapped.partes.filter(p => p.polo === 'PASSIVO').map(p => p.nome).join(', ');
+                if (ativos) activeProcess.expertInfo.autor = ativos;
+                if (passivos) activeProcess.expertInfo.reu = passivos;
+              }
+              if (mapped.movimentos?.length) {
+                activeProcess.movimentos = mapped.movimentos;
+                activeProcess.dataHoraUltimaAtualizacao = mapped.dataHoraUltimaAtualizacao;
+              }
+              if (mapped.dataAjuizamento) activeProcess.dataAjuizamento = mapped.dataAjuizamento;
+              activeProcess.hasUpdate = true;
+              await ProcessService.update(activeProcess);
+              datajudFetched = true;
+            } else {
+              console.log('[AI] CNJ não encontrado no Datajud');
+            }
+          } else {
+            console.warn('[AI] Datajud erro HTTP:', resp.status);
+          }
+        }
+      } catch (e) {
+        console.warn('[AI] Falha ao buscar dados do Datajud:', e);
+      }
+    }
+
+    container.innerHTML = `
+      <div class="ai-loading">
+        <span class="ai-loading-spinner material-symbols-rounded">progress_activity</span>
+        <p>Analisando processo com IA${datajudFetched ? ' (dados atualizados do Datajud encontrados!)' : ' (processo sem dados do Datajud)'}...</p>
+      </div>
+    `;
+
+    // PASSO 2: Chama a IA com os dados (agora enriquecidos)
+    const prompt = buildAIPrompt(activeProcess);
+    activeProcess.__aiPrompt = prompt;
+    const result = await callAIApi(prompt);
+
+    activeProcess.__aiResult = result;
+
+    if (!activeProcess.aiData) activeProcess.aiData = {};
+    activeProcess.aiData.result = result;
+    await ProcessService.update(activeProcess);
+
+    renderAIResult(result, container);
+  } catch (err) {
+    console.error('[AI] Erro:', err);
+    container.innerHTML = `
+      <div class="ai-empty-state">
+        <span class="material-symbols-rounded" style="font-size: 50px; color: var(--md-sys-color-error);">error</span>
+        <h4>Erro na análise</h4>
+        <p>${err.message}</p>
+        <button class="btn-ai-generate" id="btn-ai-retry">
+          <span class="material-symbols-rounded">refresh</span>
+          Tentar novamente
+        </button>
+      </div>
+    `;
+    document.getElementById('btn-ai-retry')?.addEventListener('click', performAIAnalysis);
+  }
+}
+
+function dateFromNow(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return { date: `${y}-${m}-${day}`, display: `${day}/${m}/${y}` };
+}
+
+function renderAIResult(data, container) {
+  const hasFields = data.fields && Object.values(data.fields).some(v => v && v.trim() && v !== 'Não informado' && v !== 'Não informada');
+
+  let fieldsHtml = '';
+  if (data.fields) {
+    fieldsHtml = `
+      <div class="ai-section">
+        <h5><span class="material-symbols-rounded">edit_note</span> Campos a Preencher</h5>
+        <ul>
+          <li><strong>Autor:</strong> ${data.fields.autor || 'Não informado'}</li>
+          <li><strong>Réu:</strong> ${data.fields.reu || 'Não informado'}</li>
+          <li><strong>Classe:</strong> ${data.fields.classe || 'Não informada'}</li>
+          <li><strong>Assunto:</strong> ${data.fields.assunto || 'Não informado'}</li>
+          <li><strong>Órgão:</strong> ${data.fields.orgao || 'Não informado'}</li>
+        </ul>
+        ${hasFields ? `<button class="btn-ai-apply" id="btn-apply-fields">
+          <span class="material-symbols-rounded">check</span> Aplicar ao Processo
+        </button>` : ''}
+      </div>`;
+  }
+
+  let tasksHtml = '';
+  if (data.tasks && data.tasks.length > 0) {
+    tasksHtml = `
+      <div class="ai-section">
+        <h5><span class="material-symbols-rounded">checklist</span> Tarefas Sugeridas</h5>
+        <ul>
+          ${data.tasks.map(t => {
+            const di = dateFromNow(t.deadline_days || 5);
+            return `<li>
+              <strong>${t.title}</strong>
+              <span>${t.description || ''}</span>
+              <div class="deadline-info">Prazo: ${di.display} (${t.deadline_days || 5} dias) | CPC art. ${t.cpc_article || 'N/A'}</div>
+            </li>`;
+          }).join('')}
+        </ul>
+        <button class="btn-ai-apply" id="btn-apply-tasks">
+          <span class="material-symbols-rounded">task_alt</span> Criar Tarefas no Sistema
+        </button>
+      </div>`;
+  }
+
+  container.innerHTML = `
+    <div class="ai-result">
+      <div class="ai-result-header">
+        <h4><span class="material-symbols-rounded">auto_fix_high</span> Análise Concluída</h4>
+        <span style="font-size: 12px; color: var(--md-sys-color-outline);">Gerado por IA</span>
+      </div>
+      <div class="ai-section">
+        <h5><span class="material-symbols-rounded">summary</span> Resumo do Processo</h5>
+        <p>${data.summary || 'Nenhum resumo disponível.'}</p>
+      </div>
+      ${fieldsHtml}
+      ${tasksHtml}
+      <div style="display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 8px;">
+        <button class="btn-ai-generate" id="btn-ai-regenerate">
+          <span class="material-symbols-rounded">refresh</span> Regenerar
+        </button>
+        <button class="md-btn md-btn-tonal" id="btn-ai-clear">
+          <span class="material-symbols-rounded">close</span> Limpar
+        </button>
+      </div>
+      <div class="ai-tech-message">As sugestões são baseadas na análise do conteúdo do processo. Revise antes de aplicar.</div>
+      <details style="margin-top: 16px; font-size: 11px; color: var(--md-sys-color-outline); cursor: pointer;">
+        <summary>🔍 Ver dados brutos (debug)</summary>
+        <div style="margin-top: 8px; padding: 8px; background: var(--md-sys-color-surface-variant); border-radius: 8px; overflow-x: auto;">
+          <p><strong>Prompt enviado à IA:</strong></p>
+          <pre style="white-space: pre-wrap; font-family: monospace; font-size: 11px;">${(activeProcess.__aiPrompt || 'N/D').substring(0, 3000)}</pre>
+          <hr style="margin: 8px 0; border-color: var(--md-sys-color-outline-variant);">
+          <p><strong>Resposta da IA (JSON):</strong></p>
+          <pre style="white-space: pre-wrap; font-family: monospace; font-size: 11px;">${JSON.stringify(data, null, 2)}</pre>
+          <hr style="margin: 8px 0; border-color: var(--md-sys-color-outline-variant);">
+          <p><strong>Dados do processo salvos no IndexedDB:</strong></p>
+          <pre style="white-space: pre-wrap; font-family: monospace; font-size: 11px;">${JSON.stringify({
+            classe: activeProcess.classe,
+            assuntos: activeProcess.assuntos,
+            orgaoJulgador: activeProcess.orgaoJulgador,
+            partes: activeProcess.partes?.map(p => ({ nome: p.nome, polo: p.polo })),
+            movimentos: activeProcess.movimentos?.length,
+            dataAjuizamento: activeProcess.dataAjuizamento,
+            expertInfo: activeProcess.expertInfo
+          }, null, 2)}</pre>
+        </div>
+      </details>
+    </div>`;
+
+  if (hasFields) {
+    document.getElementById('btn-apply-fields')?.addEventListener('click', () => applyAIFields(data));
+  }
+  if (data.tasks && data.tasks.length > 0) {
+    document.getElementById('btn-apply-tasks')?.addEventListener('click', () => createAITasks(data));
+  }
+  document.getElementById('btn-ai-regenerate')?.addEventListener('click', () => {
+    delete activeProcess.__aiResult;
+    if (activeProcess.aiData) delete activeProcess.aiData.result;
+    renderAIAnalysis();
+  });
+  document.getElementById('btn-ai-clear')?.addEventListener('click', () => {
+    delete activeProcess.__aiResult;
+    if (activeProcess.aiData) delete activeProcess.aiData.result;
+    ProcessService.update(activeProcess).then(() => renderAIAnalysis());
+  });
+}
+
+function applyAIFields(data) {
+  if (!activeProcess || !data?.fields) return;
+  const f = data.fields;
+  const isValid = v => v && v.trim() && v !== 'Não informado' && v !== 'Não informada';
+
+  if (!activeProcess.expertInfo) activeProcess.expertInfo = {};
+  if (isValid(f.autor)) activeProcess.expertInfo.autor = f.autor;
+  if (isValid(f.reu)) activeProcess.expertInfo.reu = f.reu;
+  if (isValid(f.perito)) activeProcess.expertInfo.perito = f.perito;
+
+  if (isValid(f.classe)) {
+    if (!activeProcess.classe) activeProcess.classe = {};
+    activeProcess.classe.nome = f.classe;
+  }
+  if (isValid(f.assunto)) {
+    if (!activeProcess.assuntos || activeProcess.assuntos.length === 0) {
+      activeProcess.assuntos = [{ nome: f.assunto }];
+    } else {
+      activeProcess.assuntos[0].nome = f.assunto;
+    }
+  }
+  if (isValid(f.orgao)) {
+    if (!activeProcess.orgaoJulgador) activeProcess.orgaoJulgador = {};
+    activeProcess.orgaoJulgador.nome = f.orgao;
+  }
+
+  ProcessService.update(activeProcess).then(() => {
+    if (typeof renderExpertInfoCard === 'function') renderExpertInfoCard(activeProcess);
+    const btn = document.getElementById('btn-apply-fields');
+    if (btn) {
+      btn.textContent = '✓ Aplicado!';
+      btn.disabled = true;
+      btn.style.background = '#22c55e';
+    }
+  });
+}
+
+function createAITasks(data) {
+  if (!activeProcess || !data?.tasks?.length) return;
+  if (!Array.isArray(activeProcess.tasks)) activeProcess.tasks = [];
+
+  let created = 0;
+  for (const t of data.tasks) {
+    if (!t.title) continue;
+
+    const isDup = activeProcess.tasks.some(ex =>
+      ex.title.toLowerCase() === t.title.toLowerCase()
+    );
+    if (isDup) continue;
+
+    const di = dateFromNow(t.deadline_days || 5);
+    activeProcess.tasks.push({
+      id: `task-${Date.now()}-${Math.round(Math.random() * 1000)}-${created}`,
+      title: t.title,
+      date: di.date,
+      description: t.description || '',
+      cpcArticle: t.cpc_article || '',
+      completed: false,
+      source: 'ai',
+      alarmDate: null,
+      alarmTriggered: false
+    });
+    created++;
+  }
+
+  if (created > 0) {
+    ProcessService.update(activeProcess).then(() => {
+      const btn = document.getElementById('btn-apply-tasks');
+      if (btn) {
+        btn.textContent = `✓ ${created} tarefa(s) criada(s)!`;
+        btn.disabled = true;
+        btn.style.background = '#22c55e';
+      }
+      if (typeof renderTasksList === 'function') renderTasksList();
+      if (typeof renderCalendarWidget === 'function') renderCalendarWidget();
+    });
   }
 }

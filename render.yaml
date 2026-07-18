@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: datajud-monitor
+    name: radar-perito
     env: node
     buildCommand: npm install
     startCommand: node server.js
@@ -9,8 +9,6 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: DATAJUD_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY
         sync: false
       - key: SUPABASE_URL
         sync: false

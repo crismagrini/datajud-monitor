@@ -1,7 +1,7 @@
 {
-  "name": "datajud-monitor",
+  "name": "radar-perito",
   "version": "1.0.0",
-  "description": "Aplicativo de monitoramento de processos judiciais usando a API oficial do Datajud",
+  "description": "Aplicativo Radar Perito para acompanhamento processual inteligente",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

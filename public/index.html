@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Datajud Monitor - Acompanhamento por IA</title>
+  <title>Radar Perito - Monitoramento Processual</title>
   
   <!-- Fontes do Google (Material Style) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -25,8 +25,8 @@
     <div class="auth-card">
       <div class="auth-header">
         <span class="material-symbols-rounded logo-icon">gavel</span>
-        <h1>Datajud Monitor</h1>
-        <p>Acompanhamento processual inteligente por IA</p>
+        <h1>Radar Perito</h1>
+        <p>Monitoramento e gestão de processos judiciais</p>
       </div>
       
       <!-- Mensagens de Erro/Sucesso -->
@@ -135,7 +135,7 @@
       <div class="header-brand">
         <span class="material-symbols-rounded brand-icon">gavel</span>
         <div class="brand-text">
-          <h1>Datajud Monitor</h1>
+          <h1>Radar Perito</h1>
           <p>Acompanhamento processual inteligente</p>
         </div>
       </div>
@@ -460,10 +460,14 @@
   <div class="md-dialog-overlay" id="process-detail-dialog">
     <div class="md-dialog dialog-large">
       <div class="dialog-header">
-        <div class="dialog-title-group" style="flex-wrap: wrap; gap: 8px;">
+        <div class="dialog-title-group" style="flex-wrap: wrap; gap: 8px; align-items: center;">
           <span class="dialog-court-badge" id="modal-court-badge">TJSP</span>
           <h3 id="modal-process-number" style="margin: 0;">0000000-00.0000.0.00.0000</h3>
           <span id="modal-last-checked-label" style="font-size: 11px; color: var(--md-sys-color-outline); font-weight: 500; margin-left: 4px; align-self: center;"></span>
+          <button class="md-btn md-btn-tonal md-btn-compact" id="btn-sync-process-now" style="margin-left: 8px; gap: 4px; font-size: 12px; height: 32px;" title="Buscar atualizações no Datajud agora">
+            <span class="material-symbols-rounded" style="font-size: 16px;">sync</span>
+            <span>Sincronizar</span>
+          </button>
         </div>
         <button class="close-dialog-btn" onclick="closeDialog('process-detail-dialog')">
           <span class="material-symbols-rounded">close</span>
@@ -482,13 +486,13 @@
             <span>Histórico</span>
             <span class="tab-badge" id="modal-mov-count">0</span>
           </button>
-          <button class="tab-btn tab-btn-ai" data-modal-target="tab-analise-ia">
-            <span class="material-symbols-rounded icon-ai-sparkle">psychology</span>
-            <span>Análise IA</span>
-          </button>
           <button class="tab-btn" data-modal-target="tab-agenda-tarefas" id="tab-btn-agenda">
             <span class="material-symbols-rounded">calendar_today</span>
             <span>Agenda e Tarefas</span>
+          </button>
+          <button class="tab-btn" data-modal-target="tab-ai-analysis" id="tab-btn-ai-analysis">
+            <span class="material-symbols-rounded">smart_toy</span>
+            <span>Análise IA</span>
           </button>
         </div>
         
@@ -614,6 +618,7 @@
               <div class="form-field-group">
                 <label for="edit-expert-honorarios">Honorários (R$)</label>
                 <input type="number" step="0.01" id="edit-expert-honorarios" placeholder="Ex: 4000">
+                <p class="field-help" style="font-size: 11px; margin-top: 4px; color: var(--md-sys-color-outline); line-height: 1.3;">Nota: Se pago pela Defensoria Pública (Justiça Gratuita), preencha o valor manualmente conforme a tabela do convênio.</p>
               </div>
               <div class="form-field-group">
                 <label for="edit-expert-honorarios-ufesp">Honorários (UFESPs)</label>
@@ -687,7 +692,7 @@
             
             <!-- Estado 1: Sem PDF -->
             <div class="pdf-status-empty" id="pdf-status-empty">
-              <p>Anexe a cópia integral em PDF para habilitar a análise de IA especializada para peritos e assistentes técnicos.</p>
+              <p>Anexe a cópia integral em PDF do processo para consulta e referência na ficha técnica.</p>
               <button class="md-btn md-btn-tonal" id="btn-upload-pdf-trigger" style="margin-top: 8px;">
                 <span class="material-symbols-rounded">upload_file</span>
                 <span>Anexar Cópia em PDF</span>
@@ -732,6 +737,13 @@
             
             <input type="file" id="pdf-file-input" accept=".pdf" style="display: none;">
           </div>
+          
+          <div style="display: flex; gap: 8px; margin-top: 16px; justify-content: center;">
+            <button class="md-btn md-btn-tonal" id="btn-refresh-datajud">
+              <span class="material-symbols-rounded">sync</span>
+              <span>Recarregar Dados do Datajud</span>
+            </button>
+          </div>
         </div>
         
         <!-- Tab 2: Movimentações -->
@@ -741,68 +753,7 @@
           </div>
         </div>
         
-        <!-- Tab 3: Análise por IA -->
-        <div class="modal-tab-content" id="tab-analise-ia">
-          
-          <!-- Estado Inicial (Sem Análise Gerada) -->
-          <div class="ai-empty-state" id="ai-empty-state">
-            <div class="ai-glow-icon">
-              <span class="material-symbols-rounded">psychology</span>
-            </div>
-            <h4>Análise Jurídica por IA</h4>
-            <p>O Gemini analisará todos os dados processuais e as movimentações históricas para gerar um parecer explicativo, indicando riscos, fases e próximos passos sugeridos.</p>
-            
-            <button class="md-btn md-btn-primary btn-ai-pulse" id="btn-generate-ai-analysis">
-              <span class="material-symbols-rounded">bolt</span>
-              <span>Gerar Análise por IA</span>
-            </button>
-          </div>
-          
-          <!-- Estado de Carregamento (Loading) -->
-          <div class="ai-loading-state" id="ai-loading-state" style="display: none;">
-            <div class="loading-spinner-container">
-              <span class="material-symbols-rounded loading-spinner">psychology</span>
-            </div>
-            <h4 id="ai-loading-status-text">Lendo metadados processuais...</h4>
-            
-            <!-- Barra de Progresso Linear M3 -->
-            <div class="m3-linear-progress">
-              <div class="progress-bar-indicator"></div>
-            </div>
-          </div>
-          
-          <!-- Estado Concluído (Visualização do Parecer) -->
-          <div class="ai-result-state" id="ai-result-state" style="display: none;">
-            <div class="ai-result-header">
-              <div class="ai-badge-group">
-                <span class="material-symbols-rounded text-primary">verified_user</span>
-                <span>Parecer Jurídico Gerado por IA</span>
-              </div>
-              <div class="ai-result-actions">
-                <button class="md-btn-text" id="btn-copy-ai-analysis">
-                  <span class="material-symbols-rounded">content_copy</span>
-                  <span>Copiar Parecer</span>
-                </button>
-              </div>
-            </div>
-            
-            <!-- Parecer em HTML (Gerado do Markdown) -->
-            <div class="ai-markdown-content" id="ai-analysis-text">
-              <!-- Conteúdo da análise formatado -->
-            </div>
-            
-            <div class="ai-result-footer">
-              <span class="ai-date" id="ai-analysis-date">Análise gerada em 15/07/2026</span>
-              <button class="md-btn md-btn-tonal" id="btn-regenerate-ai-analysis">
-                <span class="material-symbols-rounded">refresh</span>
-                <span>Refazer Análise</span>
-              </button>
-            </div>
-          </div>
-          
-        </div>
-        
-        <!-- Tab 4: Agenda e Tarefas (Calendário e To-do) -->
+        <!-- Tab 3: Agenda e Tarefas (Calendário e To-do) -->
         <div class="modal-tab-content" id="tab-agenda-tarefas">
           <div class="agenda-layout-grid">
             
@@ -856,13 +807,14 @@
 
           </div>
         </div>
-        
+
+        <!-- Tab 4: Análise IA -->
+        <div class="modal-tab-content" id="tab-ai-analysis">
+          <div id="ai-analysis-container"></div>
+        </div>
+
       </div>
-      <div class="dialog-footer" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-        <button class="md-btn md-btn-text text-danger" id="modal-btn-unmonitor">
-          <span class="material-symbols-rounded">delete</span>
-          <span>Parar de Monitorar</span>
-        </button>
+      <div class="dialog-footer" style="display: flex; justify-content: flex-end; align-items: center; width: 100%;">
         <button class="md-btn md-btn-tonal" id="modal-btn-archive">
           <span class="material-symbols-rounded" id="modal-btn-archive-icon">archive</span>
           <span id="modal-btn-archive-text">Arquivar Processo</span>
@@ -886,15 +838,7 @@
       
       <!-- Abas Internas de Configurações -->
       <div class="dialog-tabs" id="settings-dialog-tabs" style="margin-bottom: 16px;">
-        <button class="tab-btn active" data-settings-target="settings-tab-chaves">
-          <span class="material-symbols-rounded">vpn_key</span>
-          <span>Chaves e APIs</span>
-        </button>
-        <button class="tab-btn" data-settings-target="settings-tab-importacao" id="tab-btn-settings-import">
-          <span class="material-symbols-rounded">cloud_download</span>
-          <span>Importar por Nome</span>
-        </button>
-        <button class="tab-btn" data-settings-target="settings-tab-dados">
+        <button class="tab-btn active" data-settings-target="settings-tab-dados">
           <span class="material-symbols-rounded">database</span>
           <span>Dados</span>
         </button>
@@ -910,71 +854,8 @@
       
       <div class="dialog-content">
         
-        <!-- Tab 1: Chaves e APIs -->
-        <div class="settings-tab-content active-tab" id="settings-tab-chaves">
-          <!-- Chave do Datajud -->
-          <div class="settings-group">
-            <h4>Acesso ao CNJ (Datajud)</h4>
-            <p class="settings-desc">Opcional. Se tiver uma chave própria da API do CNJ, insira-a abaixo. Caso contrário, será usada a chave pública padrão.</p>
-            
-            <div class="md-text-field">
-              <span class="material-symbols-rounded field-icon">vpn_key</span>
-              <input type="password" id="settings-datajud-key" placeholder="APIKey cDZHYzlZa0JadVREZDJC...">
-              <button class="clear-btn" id="btn-toggle-datajud-key-visibility">
-                <span class="material-symbols-rounded" id="datajud-key-visibility-icon">visibility</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tab 2: Importação em Lote por Nome -->
-        <div class="settings-tab-content" id="settings-tab-importacao" style="display: none;">
-          <div class="settings-group">
-            <h4>Busca e Importação por Nome</h4>
-            <p class="settings-desc">Realiza uma consulta direta no Datajud para localizar todos os processos associados ao nome fornecido.</p>
-            
-            <div class="form-field-group" style="margin-bottom: 12px;">
-              <label for="settings-import-court">Tribunal para Pesquisa</label>
-              <select id="settings-import-court">
-                <!-- Populado via JS -->
-              </select>
-            </div>
-            
-            <div class="form-field-group" style="margin-bottom: 12px;">
-              <label for="settings-import-name">Nome Exato da Parte ou Perito</label>
-              <div class="md-text-field" style="margin-top: 4px;">
-                <span class="material-symbols-rounded field-icon">person</span>
-                <input type="text" id="settings-import-name" placeholder="Ex: João da Silva Santos">
-              </div>
-            </div>
-
-            <div class="form-field-group" style="margin-bottom: 16px;">
-              <label for="settings-import-polo">Filtrar por Polo / Função</label>
-              <select id="settings-import-polo">
-                <option value="todos">Qualquer menção (Todos)</option>
-                <option value="ATIVO">Requerente (Polo Ativo / Exequente)</option>
-                <option value="PASSIVO">Requerido (Polo Passivo / Executado)</option>
-              </select>
-            </div>
-
-            <button class="md-btn md-btn-primary" id="btn-start-batch-import" style="width: 100%;">
-              <span class="material-symbols-rounded">cloud_sync</span>
-              <span>Buscar e Importar</span>
-            </button>
-
-            <!-- Status do progresso da importação -->
-            <div id="batch-import-status-box" style="display: none; margin-top: 16px; padding: 12px; border-radius: 8px; background-color: var(--md-sys-color-surface-variant); border: 1px solid var(--md-sys-color-outline-variant);">
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                <span class="material-symbols-rounded spinning" id="batch-import-spinner" style="color: var(--md-sys-color-primary); font-size: 20px;">sync</span>
-                <span id="batch-import-status-text" style="font-size: 13px; font-weight: 600;">Buscando registros no Datajud...</span>
-              </div>
-              <p id="batch-import-details" style="font-size: 11px; margin: 4px 0 0 0; color: var(--md-sys-color-on-surface-variant); line-height: 1.4;"></p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tab 3: Dados -->
-        <div class="settings-tab-content" id="settings-tab-dados" style="display: none;">
+        <!-- Tab 1: Dados -->
+        <div class="settings-tab-content active-tab" id="settings-tab-dados">
           <div class="settings-group">
             <h4>Gerenciamento de Dados</h4>
             <p class="settings-desc">Exporte seus processos salvos ou limpe toda a memória local deste dispositivo.</p>
@@ -1089,21 +970,6 @@
 
           <!-- Estado Liberado: Configurações Globais -->
           <div id="dev-unlocked-container" style="display: none;">
-            <!-- Chave do Gemini (Groq) -->
-            <div class="settings-group">
-              <h4>Inteligência Artificial (Groq / Gemini)</h4>
-              <p class="settings-desc">Chave de API global utilizada para análise processual jurídica.</p>
-              <div class="md-text-field">
-                <span class="material-symbols-rounded field-icon">key</span>
-                <input type="password" id="settings-gemini-key" placeholder="gsk_...">
-                <button class="clear-btn" id="btn-toggle-gemini-key-visibility" type="button">
-                  <span class="material-symbols-rounded" id="gemini-key-visibility-icon">visibility</span>
-                </button>
-              </div>
-            </div>
-
-            <div class="form-divider"></div>
-
             <!-- Supabase Storage Config -->
             <div class="settings-group">
               <h4>Armazenamento em Nuvem (Supabase Storage)</h4>
@@ -1134,6 +1000,51 @@
                   <span class="material-symbols-rounded field-icon">folder_open</span>
                   <input type="text" id="settings-supabase-bucket" placeholder="Datajud">
                 </div>
+              </div>
+            </div>
+
+            <div class="form-divider"></div>
+
+            <!-- Importação por Nome (Área Restrita do Desenvolvedor) -->
+            <div class="settings-group">
+              <h4>Importação em Lote por Nome</h4>
+              <p class="settings-desc">Realiza consulta direta no Datajud para localizar processos pelo nome da parte ou perito.</p>
+              
+              <div class="form-field-group" style="margin-bottom: 12px;">
+                <label for="settings-import-court">Tribunal para Pesquisa</label>
+                <select id="settings-import-court">
+                  <!-- Populado via JS -->
+                </select>
+              </div>
+              
+              <div class="form-field-group" style="margin-bottom: 12px;">
+                <label for="settings-import-name">Nome Exato da Parte ou Perito</label>
+                <div class="md-text-field" style="margin-top: 4px;">
+                  <span class="material-symbols-rounded field-icon">person</span>
+                  <input type="text" id="settings-import-name" placeholder="Ex: João da Silva Santos">
+                </div>
+              </div>
+
+              <div class="form-field-group" style="margin-bottom: 16px;">
+                <label for="settings-import-polo">Filtrar por Polo / Função</label>
+                <select id="settings-import-polo">
+                  <option value="todos">Qualquer menção (Todos)</option>
+                  <option value="ATIVO">Requerente (Polo Ativo / Exequente)</option>
+                  <option value="PASSIVO">Requerido (Polo Passivo / Executado)</option>
+                </select>
+              </div>
+
+              <button class="md-btn md-btn-primary" id="btn-start-batch-import" style="width: 100%;">
+                <span class="material-symbols-rounded">cloud_sync</span>
+                <span>Buscar e Importar</span>
+              </button>
+
+              <div id="batch-import-status-box" style="display: none; margin-top: 16px; padding: 12px; border-radius: 8px; background-color: var(--md-sys-color-surface-variant); border: 1px solid var(--md-sys-color-outline-variant);">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                  <span class="material-symbols-rounded spinning" id="batch-import-spinner" style="color: var(--md-sys-color-primary); font-size: 20px;">sync</span>
+                  <span id="batch-import-status-text" style="font-size: 13px; font-weight: 600;">Buscando registros no Datajud...</span>
+                </div>
+                <p id="batch-import-details" style="font-size: 11px; margin: 4px 0 0 0; color: var(--md-sys-color-on-surface-variant); line-height: 1.4;"></p>
               </div>
             </div>
           </div>
