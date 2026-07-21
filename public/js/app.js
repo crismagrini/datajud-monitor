@@ -270,8 +270,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Inicia o monitoramento de alarmes periodicamente em segundo plano
   setInterval(checkActiveAlarms, 15000);
 
-  // Sincronização automática periódica de todos os processos monitorados (a cada 15 minutos)
-  setInterval(syncAllMonitoredSilently, 15 * 60 * 1000);
+  // Sincronização automática periódica de todos os processos monitorados (a cada 3 minutos)
+  setInterval(syncAllMonitoredSilently, 3 * 60 * 1000);
 
   if (isAuthenticated) {
     await renderDashboard();
@@ -1752,6 +1752,44 @@ function getMockSearchHits(cleanCNJ) {
   return null;
 }
 
+// Gera uma query Elasticsearch multi-formato ultrarrobusta para o Datajud (suporta CNJ limpo, formatado e wildcard)
+function buildDatajudQuery(cleanCNJ, size = 1) {
+  const formattedCNJ = cleanCNJ.length === 20
+    ? `${cleanCNJ.substring(0,7)}-${cleanCNJ.substring(7,9)}.${cleanCNJ.substring(9,13)}.${cleanCNJ.substring(13,14)}.${cleanCNJ.substring(14,16)}.${cleanCNJ.substring(16,20)}`
+    : cleanCNJ;
+
+  let wildcardPattern = cleanCNJ;
+  if (cleanCNJ.length === 20) {
+    const pN = cleanCNJ.substring(0, 7);
+    const pD = cleanCNJ.substring(7, 9);
+    const pA = cleanCNJ.substring(9, 13);
+    const pJ = cleanCNJ.substring(13, 14);
+    const pT = cleanCNJ.substring(14, 16);
+    const pO = cleanCNJ.substring(16, 20);
+    wildcardPattern = `*${pN}*${pD}*${pA}*${pJ}*${pT}*${pO}*`;
+  } else {
+    wildcardPattern = `*${cleanCNJ}*`;
+  }
+
+  return {
+    "size": size,
+    "query": {
+      "bool": {
+        "should": [
+          { "match": { "numeroProcesso": cleanCNJ } },
+          { "match": { "numeroProcesso": formattedCNJ } },
+          { "match_phrase": { "numeroProcesso": cleanCNJ } },
+          { "match_phrase": { "numeroProcesso": formattedCNJ } },
+          { "term": { "numeroProcesso": cleanCNJ } },
+          { "term": { "numeroProcesso": formattedCNJ } },
+          { "wildcard": { "numeroProcesso": wildcardPattern } }
+        ],
+        "minimum_should_match": 1
+      }
+    }
+  };
+}
+
 // Executa a busca real no servidor proxy
 async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
   // INTERCEPÇÃO DE SIMULAÇÃO LOCAL PARA TESTES DO USUÁRIO
@@ -1761,18 +1799,7 @@ async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
     return mapDatajudProcess(mockHits[0], courtAlias);
   }
 
-  // Query por match_phrase no CNJ formatado (NNNNNNN-DD.AAAA.J.TR.OOOO)
-  const formattedCNJ = cleanCNJ.length === 20
-    ? `${cleanCNJ.substring(0,7)}-${cleanCNJ.substring(7,9)}.${cleanCNJ.substring(9,13)}.${cleanCNJ.substring(13,14)}.${cleanCNJ.substring(14,16)}.${cleanCNJ.substring(16,20)}`
-    : cleanCNJ;
-  const query = {
-    "size": 1,
-    "query": {
-      "match_phrase": {
-        "numeroProcesso": formattedCNJ
-      }
-    }
-  };
+  const query = buildDatajudQuery(cleanCNJ, 1);
 
   const response = await authFetch('/api/search', {
     method: 'POST',
@@ -2183,7 +2210,9 @@ async function handlePdfUpload(e) {
       }
     }
     sampleText += '\n\n--- [TRECHOS SELECIONADOS DO PROCESSO] ---\n' + relevantExcerpts.join('\n');
-    let expertInfo = getInitialExpertInfo(activeProcess);
+    if (!activeProcess.expertInfo) {
+      activeProcess.expertInfo = getInitialExpertInfo(activeProcess);
+    }
 
     // Salva tudo no banco local IndexedDB
     activeProcess.pdfText = parsedData.text;
@@ -2192,7 +2221,10 @@ async function handlePdfUpload(e) {
     activeProcess.pdfPages = parsedData.numPages;
     activeProcess.pdfUploadDate = new Date().toISOString();
     activeProcess.pdfPath = supabasePath; // Salva o caminho do arquivo no Supabase
-    activeProcess.expertInfo = expertInfo;
+
+    // Limpa cache de IA anterior para forçar reanálise com o novo PDF
+    delete activeProcess.__aiResult;
+    if (activeProcess.aiData) delete activeProcess.aiData.result;
 
     await ProcessService.update(activeProcess);
     
@@ -2815,27 +2847,7 @@ async function syncSingleProcessSilently(processNumber) {
     const courtAlias = detectCourtFromCNJ(cleanCNJ);
     if (!courtAlias) return;
 
-    let wildcardPattern = cleanCNJ;
-    if (cleanCNJ.length === 20) {
-      const pN = cleanCNJ.substring(0, 7);
-      const pD = cleanCNJ.substring(7, 9);
-      const pA = cleanCNJ.substring(9, 13);
-      const pJ = cleanCNJ.substring(13, 14);
-      const pT = cleanCNJ.substring(14, 16);
-      const pO = cleanCNJ.substring(16, 20);
-      wildcardPattern = `*${pN}*${pD}*${pA}*${pJ}*${pT}*${pO}*`;
-    } else {
-      wildcardPattern = `*${cleanCNJ}*`;
-    }
-
-    const query = {
-      "size": 1,
-      "query": {
-        "wildcard": {
-          "numeroProcesso": wildcardPattern
-        }
-      }
-    };
+    const query = buildDatajudQuery(cleanCNJ, 1);
 
     let hits = [];
     const mockHits = getMockSearchHits(cleanCNJ);
@@ -2927,27 +2939,7 @@ async function syncSingleProcessManually(processNumber, btnEl) {
     const courtAlias = detectCourtFromCNJ(cleanCNJ);
     if (!courtAlias) throw new Error('Não foi possível identificar o tribunal a partir do número do CNJ.');
 
-    let wildcardPattern = cleanCNJ;
-    if (cleanCNJ.length === 20) {
-      const pN = cleanCNJ.substring(0, 7);
-      const pD = cleanCNJ.substring(7, 9);
-      const pA = cleanCNJ.substring(9, 13);
-      const pJ = cleanCNJ.substring(13, 14);
-      const pT = cleanCNJ.substring(14, 16);
-      const pO = cleanCNJ.substring(16, 20);
-      wildcardPattern = `*${pN}*${pD}*${pA}*${pJ}*${pT}*${pO}*`;
-    } else {
-      wildcardPattern = `*${cleanCNJ}*`;
-    }
-
-    const query = {
-      "size": 50,
-      "query": {
-        "wildcard": {
-          "numeroProcesso": wildcardPattern
-        }
-      }
-    };
+    const query = buildDatajudQuery(cleanCNJ, 50);
 
     let hits = [];
     const mockHits = getMockSearchHits(cleanCNJ);
@@ -4520,10 +4512,10 @@ function buildAIPrompt(proc) {
   if (expert.resumoProcesso) expertStr += `\n- Resumo do Processo: ${expert.resumoProcesso}`;
 
   // Filtro Inteligente de PDF (Keyword Context Scanner)
-  // Preserva os primeiros 2.000 caracteres (capa/foro/partes) e anexa trechos com termos chave do restante do PDF de trás para frente
+  // Preserva os primeiros 5.000 caracteres (capa/foro/partes do processo) e anexa trechos com termos chave do restante do PDF de trás para frente
   let pdfText = '';
   if (proc.pdfText) {
-    pdfText = proc.pdfText.substring(0, 2000);
+    pdfText = proc.pdfText.substring(0, 5000);
     
     let relevantExcerpts = [];
     let currentLength = pdfText.length;
@@ -4558,7 +4550,7 @@ function buildAIPrompt(proc) {
             const nextLine = i < pageLines.length - 1 ? pageLines[i+1].trim() : '';
             const excerpt = `\n[Página ${pageNum} - Linha ${i}]:\n${prevLine ? prevLine + '\n' : ''}${line}\n${nextLine ? nextLine + '\n' : ''}`;
             
-            if (currentLength + excerpt.length < 4500) {
+            if (currentLength + excerpt.length < 6500) {
               relevantExcerpts.push(excerpt);
               currentLength += excerpt.length;
             } else {
@@ -4566,11 +4558,11 @@ function buildAIPrompt(proc) {
             }
           }
         }
-        if (currentLength >= 4500) break;
+        if (currentLength >= 6500) break;
       }
       
       // Pass 2: Se ainda houver cota de caracteres, busca Tier 2 de trás para frente
-      if (currentLength < 4500) {
+      if (currentLength < 6500) {
         for (let p = pageBlocks.length - 1; p >= 1; p--) {
           const block = pageBlocks[p];
           const closeBracketIndex = block.indexOf(']');
@@ -4594,7 +4586,7 @@ function buildAIPrompt(proc) {
               const nextLine = i < pageLines.length - 1 ? pageLines[i+1].trim() : '';
               const excerpt = `\n[Página ${pageNum} - Linha ${i}]:\n${prevLine ? prevLine + '\n' : ''}${line}\n${nextLine ? nextLine + '\n' : ''}`;
               
-              if (currentLength + excerpt.length < 4500) {
+              if (currentLength + excerpt.length < 6500) {
                 relevantExcerpts.push(excerpt);
                 currentLength += excerpt.length;
               } else {
@@ -4602,7 +4594,7 @@ function buildAIPrompt(proc) {
               }
             }
           }
-          if (currentLength >= 4500) break;
+          if (currentLength >= 6500) break;
         }
       }
     } else {
@@ -4618,7 +4610,7 @@ function buildAIPrompt(proc) {
           const prevLine = i > 0 ? lines[i-1].trim() : '';
           const nextLine = i < lines.length - 1 ? lines[i+1].trim() : '';
           const excerpt = `\n[Trecho relevante - Linha ${i}]:\n${prevLine ? prevLine + '\n' : ''}${line}\n${nextLine ? nextLine + '\n' : ''}`;
-          if (currentLength + excerpt.length < 4500) {
+          if (currentLength + excerpt.length < 6500) {
             relevantExcerpts.push(excerpt);
             currentLength += excerpt.length;
           } else {
@@ -4627,7 +4619,7 @@ function buildAIPrompt(proc) {
         }
       }
       // Pass 2
-      if (currentLength < 4500) {
+      if (currentLength < 6500) {
         for (let i = lines.length - 1; i >= 0; i--) {
           const line = lines[i].trim();
           if (line.length < 10) continue;
@@ -4639,7 +4631,7 @@ function buildAIPrompt(proc) {
             const prevLine = i > 0 ? lines[i-1].trim() : '';
             const nextLine = i < lines.length - 1 ? lines[i+1].trim() : '';
             const excerpt = `\n[Trecho genérico - Linha ${i}]:\n${prevLine ? prevLine + '\n' : ''}${line}\n${nextLine ? nextLine + '\n' : ''}`;
-            if (currentLength + excerpt.length < 4500) {
+            if (currentLength + excerpt.length < 6500) {
               relevantExcerpts.push(excerpt);
               currentLength += excerpt.length;
             } else {
@@ -4655,33 +4647,23 @@ function buildAIPrompt(proc) {
     }
   }
 
-  return `Você é um assistente jurídico especializado em direito processual civil brasileiro (CPC). Sua função principal e OBRIGAÇÃO MANDATÓRIA ABSOLUTA é EXTRAIR dados da Ficha Técnica do Expert/Perito a partir do PDF do processo anexado abaixo.
+  return `Você é um assistente jurídico especializado em direito processual civil brasileiro (CPC). Sua função principal e OBRIGAÇÃO MANDATÓRIA ABSOLUTA é EXTRAIR os dados cadastrais do processo e da Ficha Técnica do Expert/Perito a partir do texto do PDF e das seções informadas.
  
-INSTRUÇÕES IMPORTANTES:
-- OBRIGAÇÃO MANDATÓRIA PRINCIPAL: É OBRIGATÓRIO que a análise identifique e preencha os nomes completos das partes (autor/requerente e réu/requerido), o nome completo do perito judicial nomeado ("perito") e o valor exato dos honorários periciais arbitrados pelo juiz ("honorarios").
-- LEIA ATENTAMENTE TODO O TEXTO DO PDF extraído abaixo. Busque de forma aprofundada por menções a perícia técnica, nomeação de peritos, decisões sobre ônus da prova, valores e datas de depósitos.
-- Extraia o nome COMPLETO do autor/requerente e do réu/requerido.
-- Identifique a classe processual exata e o assunto principal do processo.
-- Identifique o órgão julgador (vara, comarca).
-- Identifique se há um perito judicial nomeado ("perito").
-- Identifique se houve inversão do ônus da prova ("inversaoOnus").
-- Identifique o valor dos honorários periciais arbitrados ("honorarios").
-- Identifique se houve depósito judicial e se sim, qual o valor e a data correspondentes ("depositoJudicial", "valorDeposito", "dataDeposito").
-- Analise as movimentações e datas mencionadas no PDF.
-- Crie um resumo detalhado baseado no conteúdo do PDF.
-- CRIAÇÃO DE TAREFAS EXCLUSIVAS E EFETIVAMENTE SOLICITADAS DO PERITO: Crie tarefas/atribuições APENAS se elas tiverem sido efetivamente solicitadas ou determinadas nas decisões do juiz que constam no texto do PDF do processo, e que estejam estritamente dentro do escopo de trabalho do perito judicial conforme o CPC (como apresentar proposta de honorários, declinar da nomeação, entregar laudo pericial, prestar esclarecimentos complementares ou requerer levantamento de honorários). Nunca sugira tarefas genéricas, preventivas ou hipotéticas que não possuam uma determinação expressa e real no texto do PDF. Para cada tarefa gerada, identifique em qual página (ex: "Página 3") consta a intimação ou decisão correspondente utilizando as marcações presentes nos trechos (ex: "[Página X]") e preencha no campo "decision_page" do JSON.
-
-
+INSTRUÇÕES MANDATÓRIAS DE PREENCHIMENTO:
+- É OBRIGATÓRIO EXTRAIR E PREENCHER os dados de AUTOR, RÉU, CLASSE, ASSUNTO e ÓRGÃO JULGADOR.
+- Analise a capa e o cabeçalho do PDF (primeiras páginas) e consulte os blocos "PARTES DO PROCESSO" e "DADOS COMPLETOS DO PROCESSO" fornecidos abaixo.
+- NUNCA retorne "Autor Não Informado", "Réu Não Informado", "Ação Judicial" ou "Assunto Geral" no JSON se houver qualquer nome ou dado de processo no PDF ou nos blocos de texto abaixo.
+- As informações de "perito" (nome completo do perito nomeado), "inversaoOnus", "honorarios" e "depositoJudicial" também devem ser extraídas atentamente se presentes no PDF.
 
 PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
 {
   "summary": "resumo detalhado em 3-6 frases extraído do PDF, cobrindo partes, objeto, estágio atual e próximos passos processuais",
   "fields": {
-    "autor": "nome completo do autor/requerente extraído do PDF (ou 'Não informado' se não encontrado)",
-    "reu": "nome completo do réu/requerido extraído do PDF (ou 'Não informado' se não encontrado)",
-    "classe": "classe processual extraída do PDF (ou 'Não informada' se não encontrada)",
-    "assunto": "assunto principal extraído do PDF (ou 'Não informado' se não encontrado)",
-    "orgao": "órgão julgador extraído do PDF (ou 'Não informado' se não encontrado)",
+    "autor": "nome completo do autor/requerente extraído do PDF ou das partes (NUNCA retorne 'Autor Não Informado' se houver um nome real)",
+    "reu": "nome completo do réu/requerido extraído do PDF ou das partes (NUNCA retorne 'Réu Não Informado' se houver um nome real)",
+    "classe": "classe processual exata (ex: 'Procedimento Comum Cível', 'Execução de Título Extrajudicial')",
+    "assunto": "assunto principal do processo (ex: 'Indenização por Dano Moral', 'Prestação de Serviços')",
+    "orgao": "órgão julgador / vara (ex: '1ª Vara Cível da Comarca de São Paulo')",
     "perito": "nome completo do perito judicial nomeado extraído do PDF (ou 'Não nomeado' se não encontrado)",
     "inversaoOnus": "indique se há decisão ou requerimento de inversão do ônus da prova: 'Sim', 'Não' ou 'Não informado'",
     "honorarios": null,
@@ -4700,21 +4682,10 @@ PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
   ]
 }
 
-REGRAS:
-- OBRIGAÇÃO E PRIORIDADE MÁXIMA DA ANÁLISE: A análise deve obrigatoriamente trazer os nomes das partes (autor/requerente e réu/requerido), o nome completo do perito nomeado e o valor dos honorários periciais arbitrados pelo juiz. O preenchimento destes campos da Ficha Técnica do Expert/Perito é a obrigação principal e mandatória desta análise. Dedique seus esforços primários para extrair com exatidão estes dados.
-- EXTRAÇÃO UNICAMENTE REAL DO PDF: Extraia os campos unicamente do TEXTO DO PDF abaixo.
-- Jamais coloque na resposta valores fictícios, supostos ou deduzidos. Se uma informação (como honorários, perito nomeado, dados de depósito, etc.) não estiver explicitamente escrita no texto do PDF, você deve retornar obrigatoriamente "Não informado", "Não nomeado" ou null (conforme a instrução de cada campo). Não invente ou replique dados de exemplo sob hipótese alguma.
+REGRAS SEVERAS:
+- OBRIGAÇÃO DE PREENCHER AUTOR, RÉU, CLASSE, ASSUNTO E ÓRGÃO: Se os nomes das partes constarem na seção PARTES DO PROCESSO ou no texto da capa do PDF, é MANDATÓRIO colocar os nomes completos exatos no JSON.
+- Jamais coloque valores fictícios ou inventados. Se honorários ou depósitos não constarem explicitamente no PDF, retorne null.
 - CRIAÇÃO DE TAREFAS DO PERITO: Crie APENAS tarefas que são atribuições diretas do Perito Judicial no processo e que foram expressamente determinadas/solicitadas em alguma decisão/despacho constante no texto do PDF.
-  As únicas tarefas sugeridas permitidas são:
-  1. "Apresentar proposta de honorários, currículo e contatos" (CPC art. 465, § 2º - Prazo: 5 dias contados da intimação da nomeação)
-  2. "Manifestar escusa ou impedimento (declínio de nomeação)" (CPC art. 467 e 146 - Prazo: 5 dias contados da intimação da nomeação)
-  3. "Informar data, hora e local de realização da perícia" (CPC art. 466, § 2º - Antecedência mínima)
-  4. "Entregar laudo pericial" (CPC art. 477 - Prazo determinado pelo juiz na intimação, ex: 20 dias antes da audiência ou outro prazo assinalado pelo juiz)
-  5. "Prestar esclarecimentos sobre o laudo / Responder a impugnação" (CPC art. 477, § 2º - Prazo: 15 dias contados da intimação)
-  6. "Solicitar levantamento de honorários periciais" (CPC art. 465, § 4º - Após a entrega do laudo ou realização dos trabalhos)
-- NUNCA crie tarefas genéricas (como realizar a perícia técnica) ou preventivas/hipotéticas que não possuam uma intimação ou ordem real e expressa contida no texto do PDF.
-- NÃO duplique tarefas existentes.
-- Se NÃO houver task relevante, retorne array vazio.
 
 DADOS COMPLETOS DO PROCESSO:
 - Número: ${proc.numeroProcesso}
@@ -4735,12 +4706,12 @@ ${partesStr || '  Nenhuma parte cadastrada'}
 MOVIMENTAÇÕES DO PROCESSO (${(proc.movimentos || []).length} no total):
 ${movimentosStr || '  Nenhuma movimentação'}
 
-${pdfText ? `\n=== TEXTO COMPLETO EXTRAÍDO DO PDF DO PROCESSO (USE ESTE TEXTO PARA EXTRAIR OS DADOS) ===\n${pdfText}\n=== FIM DO TEXTO DO PDF ===\n` : '\n(Nenhum PDF anexado a este processo)\n'}
+${pdfText ? `\n=== TEXTO DO PDF DO PROCESSO (USAR PARA EXTRAIR AUTOR, RÉU, CLASSE, ASSUNTO, ÓRGÃO E DECISÕES) ===\n${pdfText}\n=== FIM DO TEXTO DO PDF ===\n` : '\n(Nenhum PDF anexado a este processo)\n'}
 
 TAREFAS EXISTENTES NO SISTEMA:
 ${tasks.length ? JSON.stringify(tasks.map(t => ({ title: t.title, description: t.description, cpcArticle: t.cpcArticle })), null, 2) : 'Nenhuma'}
 
-INSTRUÇÃO FINAL: Analise TODO o conteúdo acima. Se o PDF estiver presente, USE-O como fonte principal para extrair autor, réu, classe, assunto, órgão julgador e movimentações. Se não houver PDF, use os dados cadastrados. Retorne SOMENTE o JSON, sem formatação extra.`;
+INSTRUÇÃO FINAL: Analise TODO o conteúdo acima. Extraia obrigatoriamente os dados reais de Autor, Réu, Classe, Assunto e Órgão. Retorne SOMENTE o JSON válido sem formatação markdown em volta.`;
 }
 
 function renderAIAnalysis() {
@@ -4790,12 +4761,7 @@ async function performAIAnalysis() {
       try {
         const courtAlias = detectCourtFromCNJ(cleanCNJ);
         if (courtAlias) {
-          // Formata o CNJ no padrão do Datajud: NNNNNNN-DD.AAAA.J.TR.OOOO
-          const formattedCNJ = `${cleanCNJ.substring(0,7)}-${cleanCNJ.substring(7,9)}.${cleanCNJ.substring(9,13)}.${cleanCNJ.substring(13,14)}.${cleanCNJ.substring(14,16)}.${cleanCNJ.substring(16,20)}`;
-          console.log('[AI] Buscando CNJ formatado:', formattedCNJ);
-
-          // Query match_phrase (busca exata por frase, respeita tokens)
-          const query = { size: 1, query: { match_phrase: { numeroProcesso: formattedCNJ } } };
+          const query = buildDatajudQuery(cleanCNJ, 1);
 
           const resp = await authFetch('/api/search', {
             method: 'POST',
@@ -4886,11 +4852,24 @@ function dateFromNow(days) {
   return { date: `${y}-${m}-${day}`, display: `${day}/${m}/${y}` };
 }
 
+function isPlaceholderValue(v) {
+  if (!v || !String(v).trim()) return true;
+  const s = String(v).trim().toLowerCase();
+  if ([
+    'não', 'não informado', 'não informada', 'não nomeado', 'autor não informado', 
+    'réu não informado', 'ação judicial', 'assunto geral', 'vara não informada',
+    'não cadastrada', 'não localizada', 'não classificada', 'classe não classificada', '-'
+  ].includes(s)) {
+    return true;
+  }
+  return s.includes('não informado') || s.includes('não informada') || s.includes('não nomeado');
+}
+
 function checkIfFieldsDiffer(data) {
   if (!activeProcess || !data?.fields) return false;
   const f = data.fields;
   const info = activeProcess.expertInfo || {};
-  const isValid = v => v && v.trim() && v !== 'Não informado' && v !== 'Não informada' && v !== 'Não nomeado';
+  const isValid = v => !isPlaceholderValue(v);
 
   if (isValid(f.autor) && f.autor !== info.autor) return true;
   if (isValid(f.reu) && f.reu !== info.reu) return true;
@@ -4920,24 +4899,23 @@ function checkIfFieldsDiffer(data) {
 
 function isFieldMatching(fieldName, aiValue) {
   if (!activeProcess) return false;
+  if (isPlaceholderValue(aiValue)) return false;
+
   const info = activeProcess.expertInfo || {};
-  const isValid = v => v && String(v).trim() && v !== 'Não informado' && v !== 'Não informada' && v !== 'Não nomeado';
-  
-  if (!isValid(aiValue)) return false;
 
   switch (fieldName) {
-    case 'autor': return info.autor === aiValue;
-    case 'reu': return info.reu === aiValue;
-    case 'perito': return info.perito === aiValue;
-    case 'inversaoOnus': return info.inversaoOnus === aiValue;
-    case 'depositoJudicial': return info.depositoJudicial === aiValue;
+    case 'autor': return !isPlaceholderValue(info.autor) && info.autor === aiValue;
+    case 'reu': return !isPlaceholderValue(info.reu) && info.reu === aiValue;
+    case 'perito': return !isPlaceholderValue(info.perito) && info.perito === aiValue;
+    case 'inversaoOnus': return !isPlaceholderValue(info.inversaoOnus) && info.inversaoOnus === aiValue;
+    case 'depositoJudicial': return !isPlaceholderValue(info.depositoJudicial) && info.depositoJudicial === aiValue;
     case 'dataDeposito': return info.dataDeposito === aiValue;
-    case 'classe': return activeProcess.classe?.nome === aiValue;
+    case 'classe': return activeProcess.classe?.nome && !isPlaceholderValue(activeProcess.classe.nome) && activeProcess.classe.nome === aiValue;
     case 'assunto': {
       const currentAssunto = activeProcess.assuntos?.[0]?.nome || '';
-      return currentAssunto === aiValue;
+      return currentAssunto && !isPlaceholderValue(currentAssunto) && currentAssunto === aiValue;
     }
-    case 'orgao': return activeProcess.orgaoJulgador?.nome === aiValue;
+    case 'orgao': return activeProcess.orgaoJulgador?.nome && !isPlaceholderValue(activeProcess.orgaoJulgador.nome) && activeProcess.orgaoJulgador.nome === aiValue;
     case 'honorarios': {
       const currentHonorarios = parseFloat(info.honorarios);
       const aiHonorarios = parseFloat(aiValue);
@@ -4953,7 +4931,7 @@ function isFieldMatching(fieldName, aiValue) {
 }
 
 function renderAIResult(data, container) {
-  const hasFields = data.fields && Object.values(data.fields).some(v => v && String(v).trim() && v !== 'Não informado' && v !== 'Não informada');
+  const hasFields = data.fields && Object.values(data.fields).some(v => !isPlaceholderValue(v));
   const fieldsDiffer = checkIfFieldsDiffer(data);
 
   let fieldsHtml = '';
@@ -4961,15 +4939,25 @@ function renderAIResult(data, container) {
     const renderFieldItem = (label, name, value, isCurrency = false) => {
       if (!value) return '';
       const formattedVal = isCurrency ? formatCurrency(value) : value;
-      const isApplied = isFieldMatching(name, value);
+      const isPlaceholder = isPlaceholderValue(value);
+      const isApplied = !isPlaceholder && isFieldMatching(name, value);
       
-      const badge = isApplied ? `
-        <span style="font-size: 11px; background: #d1fae5; color: #065f46; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; font-weight: 500; margin-left: 8px;">
-          <span class="material-symbols-rounded" style="font-size: 13px;">check_circle</span> Preenchido
-        </span>
-      ` : '';
+      let badge = '';
+      if (isPlaceholder) {
+        badge = `
+          <span style="font-size: 11px; background: #fff7ed; color: #c2410c; border: 1px solid #ffedd5; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; font-weight: 500; margin-left: 8px;">
+            <span class="material-symbols-rounded" style="font-size: 13px;">help_outline</span> Não Informado
+          </span>
+        `;
+      } else if (isApplied) {
+        badge = `
+          <span style="font-size: 11px; background: #d1fae5; color: #065f46; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; font-weight: 500; margin-left: 8px;">
+            <span class="material-symbols-rounded" style="font-size: 13px;">check_circle</span> Preenchido
+          </span>
+        `;
+      }
       
-      const style = isApplied ? 'style="color: #065f46;"' : '';
+      const style = isApplied ? 'style="color: #065f46;"' : (isPlaceholder ? 'style="color: var(--md-sys-color-outline);"' : '');
       
       return `<li ${style}><strong>${label}:</strong> ${formattedVal} ${badge}</li>`;
     };
@@ -5124,11 +5112,31 @@ function renderAIResult(data, container) {
 function applyAIFields(data) {
   if (!activeProcess || !data?.fields) return;
   const f = data.fields;
-  const isValid = v => v && v.trim() && v !== 'Não informado' && v !== 'Não informada';
+  const isValid = v => !isPlaceholderValue(v);
 
   if (!activeProcess.expertInfo) activeProcess.expertInfo = {};
-  if (isValid(f.autor)) activeProcess.expertInfo.autor = f.autor;
-  if (isValid(f.reu)) activeProcess.expertInfo.reu = f.reu;
+  if (!Array.isArray(activeProcess.partes)) activeProcess.partes = [];
+
+  if (isValid(f.autor)) {
+    activeProcess.expertInfo.autor = f.autor;
+    const ativoIndex = activeProcess.partes.findIndex(p => p.polo === 'ATIVO');
+    if (ativoIndex !== -1) {
+      activeProcess.partes[ativoIndex].nome = f.autor;
+    } else {
+      activeProcess.partes.push({ nome: f.autor, polo: 'ATIVO', tipo: 'Física' });
+    }
+  }
+
+  if (isValid(f.reu)) {
+    activeProcess.expertInfo.reu = f.reu;
+    const passivoIndex = activeProcess.partes.findIndex(p => p.polo === 'PASSIVO');
+    if (passivoIndex !== -1) {
+      activeProcess.partes[passivoIndex].nome = f.reu;
+    } else {
+      activeProcess.partes.push({ nome: f.reu, polo: 'PASSIVO', tipo: 'Física' });
+    }
+  }
+
   if (isValid(f.perito)) activeProcess.expertInfo.perito = f.perito;
   if (isValid(f.inversaoOnus)) activeProcess.expertInfo.inversaoOnus = f.inversaoOnus;
   if (isValid(f.depositoJudicial)) activeProcess.expertInfo.depositoJudicial = f.depositoJudicial;
@@ -5160,7 +5168,14 @@ function applyAIFields(data) {
   }
 
   ProcessService.update(activeProcess).then(() => {
+    // Atualiza modal DOM
+    if (document.getElementById('modal-classe')) document.getElementById('modal-classe').textContent = activeProcess.classe?.nome || '-';
+    if (document.getElementById('modal-assunto')) document.getElementById('modal-assunto').textContent = activeProcess.assuntos?.[0]?.nome || '-';
+    if (document.getElementById('modal-orgao')) document.getElementById('modal-orgao').textContent = activeProcess.orgaoJulgador?.nome || '-';
+    
     if (typeof renderExpertInfoCard === 'function') renderExpertInfoCard(activeProcess);
+    if (typeof renderDashboard === 'function') renderDashboard();
+
     const btn = document.getElementById('btn-apply-fields');
     if (btn) {
       btn.textContent = '✓ Aplicado!';
