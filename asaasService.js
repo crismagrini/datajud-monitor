@@ -21,9 +21,10 @@ class AsaasService {
     return new Promise((resolve, reject) => {
       const apiKey = process.env.ASAAS_API_KEY || this.apiKey;
       const env = (process.env.ASAAS_ENV || this.env).toLowerCase();
-      const baseUrl = env === 'production' 
-        ? 'https://www.asaas.com/api/v3' 
-        : 'https://sandbox.asaas.com/api/v3';
+      const isSandbox = env === 'sandbox' || apiKey.includes('_hmlg_');
+      const baseUrl = isSandbox
+        ? 'https://sandbox.asaas.com/api/v3'
+        : 'https://www.asaas.com/api/v3';
 
       const url = new URL(`${baseUrl}${endpoint}`);
       const isHttps = url.protocol === 'https:';
