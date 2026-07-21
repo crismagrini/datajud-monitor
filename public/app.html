@@ -978,6 +978,10 @@
           <span class="material-symbols-rounded">archive</span>
           <span>Arquivados</span>
         </button>
+        <button class="tab-btn" data-settings-target="settings-tab-premium" id="btn-settings-tab-premium">
+          <span class="material-symbols-rounded" style="color: #10b981;">workspace_premium</span>
+          <span>Assinatura Premium</span>
+        </button>
         <button class="tab-btn" data-settings-target="settings-tab-desenvolvedor">
           <span class="material-symbols-rounded">developer_mode</span>
           <span>Desenvolvedor</span>
@@ -1080,6 +1084,59 @@
             
             <div id="settings-archived-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 250px; overflow-y: auto; margin-top: 12px; padding-right: 4px;">
               <!-- Lista injetada dinamicamente via JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab Premium: Planos e Assinatura -->
+        <div class="settings-tab-content" id="settings-tab-premium" style="display: none;">
+          <div class="settings-group">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--md-sys-color-outline-variant); padding-bottom: 12px;">
+              <div>
+                <h4 style="margin: 0; font-size: 16px; font-weight: 700;">Planos e Assinatura Premium</h4>
+                <p class="settings-desc" style="margin-top: 2px;">Escolha o plano ideal para liberar monitoramento ilimitado e análises de IA CPC.</p>
+              </div>
+              <div id="settings-subscription-status-badge"></div>
+            </div>
+
+            <!-- Cards de Preço na Aba Premium -->
+            <div style="display: flex; gap: 16px; flex-wrap: wrap; margin-top: 16px;">
+              <!-- Plano Mensal -->
+              <div style="flex: 1; min-width: 240px; background: var(--md-sys-color-surface-variant); border: 1px solid var(--md-sys-color-outline-variant); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between;">
+                <div>
+                  <h5 style="margin: 0; font-size: 16px; font-weight: 700; color: var(--md-sys-color-on-surface);">Plano Mensal</h5>
+                  <p style="font-size: 12px; color: var(--md-sys-color-on-surface-variant); margin: 4px 0 12px 0;">Flexibilidade total sem contrato ou fidelidade.</p>
+                  <div style="font-size: 26px; font-weight: 800; color: var(--md-sys-color-primary); margin-bottom: 12px;">R$ 49,90 <span style="font-size: 12px; font-weight: 500; color: var(--md-sys-color-on-surface-variant);">/mês</span></div>
+                  <ul style="font-size: 12px; padding-left: 18px; margin: 0 0 16px 0; display: flex; flex-direction: column; gap: 6px; color: var(--md-sys-color-on-surface);">
+                    <li>Processos monitorados ilimitados</li>
+                    <li>Análise profunda de IA do PDF</li>
+                    <li>Sugestão de tarefas CPC do Perito</li>
+                    <li>Atualização monetária TJSP</li>
+                  </ul>
+                </div>
+                <button class="md-btn md-btn-primary" onclick="openAsaasCheckoutModal('monthly')" style="width: 100%;">
+                  Assinar Plano Mensal (R$ 49,90)
+                </button>
+              </div>
+
+              <!-- Plano Anual (Destaque 4 Meses Grátis) -->
+              <div style="flex: 1; min-width: 240px; background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(16,185,129,0.15)); border: 2px solid #10b981; border-radius: 16px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; position: relative;">
+                <span style="position: absolute; top: -12px; right: 16px; background: #10b981; color: white; padding: 2px 10px; border-radius: 10px; font-size: 10px; font-weight: 800;">🎁 4 MESES GRÁTIS</span>
+                <div>
+                  <h5 style="margin: 0; font-size: 16px; font-weight: 700; color: var(--md-sys-color-on-surface);">Plano Anual</h5>
+                  <p style="font-size: 12px; color: var(--md-sys-color-on-surface-variant); margin: 4px 0 12px 0;">Pague 8 meses e leve 12 meses (R$ 33,26/mês).</p>
+                  <div style="font-size: 26px; font-weight: 800; color: #10b981; margin-bottom: 12px;">R$ 399,20 <span style="font-size: 12px; font-weight: 500; color: var(--md-sys-color-on-surface-variant);">/ano</span></div>
+                  <ul style="font-size: 12px; padding-left: 18px; margin: 0 0 16px 0; display: flex; flex-direction: column; gap: 6px; color: var(--md-sys-color-on-surface);">
+                    <li><strong>4 Meses de acesso grátis inclusos</strong></li>
+                    <li>Equivalente a R$ 33,26/mês</li>
+                    <li>Suporte prioritário via WhatsApp</li>
+                    <li>Liberação imediata</li>
+                  </ul>
+                </div>
+                <button class="md-btn md-btn-primary" onclick="openAsaasCheckoutModal('annual')" style="width: 100%; background: #10b981; color: white;">
+                  Assinar Plano Anual (4 Meses Grátis)
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1283,9 +1340,26 @@
   <!-- Biblioteca PDF.js para extração de texto no lado do cliente (rápido e sem limites de tamanho) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
   
-  <!-- SDK do Supabase para Armazenamento na Nuvem -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  
+  <!-- Overlay de Alerta de Conta Expirada (Efeito Blur na Interface) -->
+  <div id="expired-account-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); z-index: 9999; align-items: center; justify-content: center; padding: 20px;">
+    <div style="background: var(--md-sys-color-surface); border: 2px solid var(--md-sys-color-error); border-radius: 24px; padding: 36px 28px; max-width: 480px; width: 100%; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.6); animation: floatIn 0.4s ease-out;">
+      <div style="display: inline-flex; align-items: center; justify-content: center; width: 72px; height: 72px; border-radius: 20px; background: rgba(239, 68, 68, 0.15); color: var(--md-sys-color-error); border: 1px solid rgba(239, 68, 68, 0.3); margin-bottom: 20px;">
+        <span class="material-symbols-rounded" style="font-size: 38px;">lock_clock</span>
+      </div>
+      <h2 style="font-size: 22px; font-weight: 800; margin-bottom: 8px; color: var(--md-sys-color-on-surface); letter-spacing: -0.5px;">Acesso Expirado</h2>
+      <p style="font-size: 14px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 28px; line-height: 1.5;">
+        Seu período de teste de 7 dias ou a sua assinatura expirou.<br>
+        O monitoramento automático e as atualizações do Datajud estão <strong>pausados</strong>.
+      </p>
+      <div style="display: flex; gap: 12px; flex-direction: column;">
+        <button class="md-btn md-btn-primary" onclick="openSettingsPremiumTab()" style="width: 100%; height: 48px; font-size: 15px; font-weight: 700; background: #10b981; color: white;">
+          <span class="material-symbols-rounded">workspace_premium</span>
+          <span>Ver Planos e Assinar Premium</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script src="js/app.js?v=1.0.3"></script>
 </body>
 </html>

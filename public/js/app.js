@@ -364,25 +364,83 @@ function showVerificationScreen(testCode = '') {
   document.getElementById('verification-error-box').style.display = 'none';
 }
 
+window.openSettingsPremiumTab = function() {
+  const expiredOverlay = document.getElementById('expired-account-overlay');
+  if (expiredOverlay) expiredOverlay.style.display = 'none';
+
+  const settingsDialog = document.getElementById('settings-dialog');
+  if (settingsDialog) {
+    settingsDialog.style.display = 'flex';
+    openDialog('settings-dialog');
+    
+    const tabBtns = settingsDialog.querySelectorAll('.settings-sidebar-tabs .tab-btn');
+    const tabContents = settingsDialog.querySelectorAll('.settings-tab-content');
+    
+    tabBtns.forEach(btn => btn.classList.remove('active', 'active-tab'));
+    tabContents.forEach(cnt => {
+      cnt.style.display = 'none';
+      cnt.classList.remove('active-tab');
+    });
+
+    const premiumBtn = document.getElementById('btn-settings-tab-premium');
+    const premiumCnt = document.getElementById('settings-tab-premium');
+    if (premiumBtn) premiumBtn.classList.add('active');
+    if (premiumCnt) {
+      premiumCnt.style.display = 'block';
+      premiumCnt.classList.add('active-tab');
+    }
+  }
+};
+
 async function updateSubscriptionUI() {
-  const container = document.getElementById('user-subscription-badge');
-  if (!container) return;
+  const badgeContainer = document.getElementById('user-subscription-badge');
+  const settingsStatusContainer = document.getElementById('settings-subscription-status-badge');
+  const expiredOverlay = document.getElementById('expired-account-overlay');
+  const appContainer = document.querySelector('.app-container');
 
   try {
     const resp = await authFetch('/api/payment/status');
     if (resp.ok) {
       const data = await resp.json();
-      if (data.subscriptionActive) {
-        container.innerHTML = `
-          <span class="badge-plan-premium" style="font-size: 11px; background: #d1fae5; color: #065f46; padding: 2px 8px; border-radius: 20px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;" title="Assinatura ativa!"><span class="material-symbols-rounded" style="font-size: 14px;">workspace_premium</span> Premium</span>
-        `;
+
+      if (data.expired) {
+        // CONTA EXPIRADA: Aplica o efeito blur na interface e exibe a mensagem
+        if (appContainer) appContainer.style.filter = 'blur(6px)';
+        if (expiredOverlay) expiredOverlay.style.display = 'flex';
+
+        if (badgeContainer) {
+          badgeContainer.innerHTML = `
+            <span onclick="openSettingsPremiumTab()" style="font-size: 11px; background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; padding: 2px 10px; border-radius: 20px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;" title="Acesso Expirado. Clique para assinar!"><span class="material-symbols-rounded" style="font-size: 14px;">lock_clock</span> Acesso Expirado</span>
+          `;
+        }
+        if (settingsStatusContainer) {
+          settingsStatusContainer.innerHTML = `<span style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); padding: 4px 12px; border-radius: 20px; font-weight: 700; font-size: 12px;">⚠️ ACESSO EXPIRADO</span>`;
+        }
       } else {
-        container.innerHTML = `
-          <span class="badge-plan-free" id="btn-show-billing" style="font-size: 11px; background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 20px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;" title="Clique para assinar"><span class="material-symbols-rounded" style="font-size: 14px;">lock</span> Grátis / Demo</span>
-        `;
-        document.getElementById('btn-show-billing')?.addEventListener('click', () => {
-          openDialog('billing-dialog');
-        });
+        // CONTA ATIVA OU TRIAL DENTRO DOS 7 DIAS
+        if (appContainer) appContainer.style.filter = 'none';
+        if (expiredOverlay) expiredOverlay.style.display = 'none';
+
+        if (data.subscriptionActive) {
+          if (badgeContainer) {
+            badgeContainer.innerHTML = `
+              <span onclick="openSettingsPremiumTab()" style="font-size: 11px; background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; padding: 2px 10px; border-radius: 20px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;" title="Assinatura Premium Ativa"><span class="material-symbols-rounded" style="font-size: 14px;">workspace_premium</span> Premium</span>
+            `;
+          }
+          if (settingsStatusContainer) {
+            settingsStatusContainer.innerHTML = `<span style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); padding: 4px 12px; border-radius: 20px; font-weight: 700; font-size: 12px;">✓ ASSINANTE PREMIUM</span>`;
+          }
+        } else {
+          const label = data.trialExtended ? 'Trial Liberado (Admin)' : `Teste Grátis (${data.trialDaysLeft || 0} dias restantes)`;
+          if (badgeContainer) {
+            badgeContainer.innerHTML = `
+              <span onclick="openSettingsPremiumTab()" style="font-size: 11px; background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; padding: 2px 10px; border-radius: 20px; font-weight: 700; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;" title="Clique para assinar o Plano Premium"><span class="material-symbols-rounded" style="font-size: 14px;">schedule</span> ${label}</span>
+            `;
+          }
+          if (settingsStatusContainer) {
+            settingsStatusContainer.innerHTML = `<span style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); padding: 4px 12px; border-radius: 20px; font-weight: 700; font-size: 12px;">⏳ ${label}</span>`;
+          }
+        }
       }
     }
   } catch (err) {

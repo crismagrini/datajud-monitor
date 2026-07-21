@@ -83,6 +83,43 @@ async function authenticateToken(req, res, next) {
   }
 }
 
+// Middleware de verificação de assinatura/trial ativo (bloqueia sincronizações e buscas em contas expiradas)
+async function ensureActiveSubscription(req, res, next) {
+  try {
+    const user = await db.findUserByEmail(req.user.email);
+    if (!user) return res.status(401).json({ error: 'Usuário não localizado.' });
+
+    const now = new Date();
+    const created = user.createdAt ? new Date(user.createdAt) : new Date();
+    const diffTime = Math.abs(now - created);
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    const isTrialActive = diffDays <= 7;
+
+    let subActive = !!user.subscriptionActive;
+    if (subActive && user.subscriptionExpires) {
+      const expiry = new Date(user.subscriptionExpires);
+      if (expiry < now) {
+        subActive = false;
+        await db.updateUser(user.email, { subscriptionActive: false });
+      }
+    }
+
+    const accessGranted = subActive || !!user.trialExtended || isTrialActive;
+
+    if (!accessGranted) {
+      return res.status(403).json({
+        error: 'CONTA_EXPIRADA',
+        message: 'Seu período de testes de 7 dias ou assinatura expirou. Assine o plano Premium nas Configurações para continuar monitorando seus processos.'
+      });
+    }
+
+    next();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro ao verificar permissão da conta.' });
+  }
+}
+
 const app = express();
 // A Hostinger define a porta dinamicamente na variável de ambiente PORT
 const PORT = process.env.PORT || 3000;
@@ -351,8 +388,8 @@ app.post('/api/radar/import', authenticateToken, async (req, res) => {
   }
 });
 
-// Rota para varrer tribunais no Datajud em busca de nomeações reais do perito (PROTEGIDA)
-app.post('/api/radar/scan', authenticateToken, async (req, res) => {
+// Rota para varrer tribunais no Datajud em busca de nomeações reais do perito (PROTEGIDA POR ASSINATURA/TRIAL)
+app.post('/api/radar/scan', authenticateToken, ensureActiveSubscription, async (req, res) => {
   const user = req.user;
   // Tribunais mais relevantes para nomeação de peritos
   const tribunals = ['tjsp', 'tjrj', 'tjmg', 'tjrs', 'tjpr', 'tjsc', 'tjba', 'tjpe', 'tjce', 'tjdft', 'trf1', 'trf3', 'trf4', 'trt2', 'trt15'];
@@ -480,8 +517,8 @@ app.post('/api/radar/scan', authenticateToken, async (req, res) => {
   }
 });
 
-// Rota de proxy para consultas à API do Datajud (PROTEGIDA)
-app.post('/api/search', authenticateToken, async (req, res) => {
+// Rota de proxy para consultas à API do Datajud (PROTEGIDA POR ASSINATURA/TRIAL)
+app.post('/api/search', authenticateToken, ensureActiveSubscription, async (req, res) => {
   const { tribunal, query, timeout } = req.body;
 
   if (!tribunal) {
@@ -548,8 +585,8 @@ app.post('/api/search', authenticateToken, async (req, res) => {
   }
 });
 
-// Rota para análise de processos com IA (Groq) - a chave fica no servidor
-app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
+// Rota para análise de processos com IA (Groq) - PROTEGIDA POR ASSINATURA/TRIAL
+app.post('/api/ai/analyze', authenticateToken, ensureActiveSubscription, async (req, res) => {
   const { prompt } = req.body;
 
   if (!prompt) {
@@ -1095,20 +1132,33 @@ app.get('/api/payment/status', authenticateToken, async (req, res) => {
     const user = await db.findUserByEmail(req.user.email);
     if (!user) return res.status(404).json({ error: 'Usuário não localizado.' });
 
-    // Verifica se a assinatura expirou
-    let active = !!user.subscriptionActive;
-    if (active && user.subscriptionExpires) {
+    const now = new Date();
+    const created = user.createdAt ? new Date(user.createdAt) : new Date();
+    const diffTime = Math.abs(now - created);
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    const isTrialActive = diffDays <= 7;
+    const trialDaysLeft = isTrialActive ? Math.max(0, 7 - diffDays) : 0;
+
+    let subActive = !!user.subscriptionActive;
+    if (subActive && user.subscriptionExpires) {
       const expiry = new Date(user.subscriptionExpires);
-      if (expiry < new Date()) {
-        active = false;
+      if (expiry < now) {
+        subActive = false;
         await db.updateUser(user.email, { subscriptionActive: false });
       }
     }
 
+    const accessGranted = subActive || !!user.trialExtended || isTrialActive;
+
     res.json({
-      subscriptionActive: active,
+      accessGranted: accessGranted,
+      expired: !accessGranted,
+      subscriptionActive: subActive,
       subscriptionPlan: user.subscriptionPlan || 'free',
-      subscriptionExpires: user.subscriptionExpires || null
+      subscriptionExpires: user.subscriptionExpires || null,
+      isTrialActive: isTrialActive,
+      trialDaysLeft: trialDaysLeft,
+      trialExtended: !!user.trialExtended
     });
   } catch (err) {
     console.error(err);
