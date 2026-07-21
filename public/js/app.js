@@ -1525,14 +1525,65 @@ async function handleRegisterSubmit() {
   const btnText = btnConfirm.querySelector('span:not(.material-symbols-rounded)');
   const btnIcon = btnConfirm.querySelector('.material-symbols-rounded');
 
+  const statusBox = document.getElementById('reg-search-status-box');
+  const titleEl = document.getElementById('reg-status-title');
+  const detailsEl = document.getElementById('reg-status-details');
+  const iconEl = document.getElementById('reg-status-icon');
+  const badgeEl = document.getElementById('reg-status-badge');
+  const progressBar = document.getElementById('reg-status-bar');
+
+  const updateStatus = (title, details, isError = false, isSuccess = false) => {
+    if (statusBox && titleEl && detailsEl && iconEl) {
+      statusBox.style.display = 'flex';
+      titleEl.textContent = title;
+      detailsEl.textContent = details;
+      
+      if (isError) {
+        iconEl.className = 'material-symbols-rounded';
+        iconEl.style.color = 'var(--md-sys-color-error)';
+        iconEl.textContent = 'error';
+        if (badgeEl) {
+          badgeEl.textContent = 'ERRO / INDISPONÍVEL';
+          badgeEl.className = '';
+          badgeEl.style.background = 'var(--md-sys-color-error-container)';
+          badgeEl.style.color = 'var(--md-sys-color-on-error-container)';
+        }
+        if (progressBar) progressBar.style.display = 'none';
+      } else if (isSuccess) {
+        iconEl.className = 'material-symbols-rounded';
+        iconEl.style.color = 'var(--md-sys-color-success)';
+        iconEl.textContent = 'check_circle';
+        if (badgeEl) {
+          badgeEl.textContent = 'SUCESSO';
+          badgeEl.className = '';
+          badgeEl.style.background = 'var(--md-sys-color-success-container)';
+          badgeEl.style.color = 'var(--md-sys-color-on-success-container)';
+        }
+        if (progressBar) progressBar.style.display = 'none';
+      } else {
+        iconEl.className = 'material-symbols-rounded spinning-icon';
+        iconEl.style.color = 'var(--md-sys-color-primary)';
+        iconEl.textContent = 'progress_activity';
+        if (badgeEl) {
+          badgeEl.textContent = 'CONSULTANDO';
+          badgeEl.className = 'pulsing-badge';
+          badgeEl.style.background = 'var(--md-sys-color-primary-container)';
+          badgeEl.style.color = 'var(--md-sys-color-on-primary-container)';
+        }
+        if (progressBar) progressBar.style.display = 'block';
+      }
+    }
+  };
+
   btnConfirm.disabled = true;
-  btnText.textContent = 'Buscando...';
+  if (btnText) btnText.textContent = 'Buscando...';
   if (btnIcon) btnIcon.className = 'material-symbols-rounded spinning';
 
   try {
     let processObject = null;
 
     if (isAuto) {
+      updateStatus('Identificando tribunal...', 'Verificando o fórum/tribunal de origem do CNJ...');
       const courtAlias = detectCourtFromCNJ(cleanCNJ);
       if (!courtAlias) {
         throw new Error('Não foi possível identificar o tribunal a partir do número CNJ informado.');
@@ -1541,31 +1592,40 @@ async function handleRegisterSubmit() {
       // Pre-seleciona logo o tribunal no formulário manual preventivamente
       document.getElementById('reg-manual-court').value = courtAlias.toUpperCase();
 
-      processObject = await fetchProcessFromAPI(cleanCNJ, courtAlias);
+      updateStatus(`Conectando ao tribunal ${courtAlias.toUpperCase()}...`, 'Consultando a base de dados do Datajud no CNJ...');
+
+      processObject = await fetchProcessFromAPI(cleanCNJ, courtAlias, (title, details) => {
+        updateStatus(title, details);
+      });
     } else {
+      updateStatus('Processando dados manuais...', 'Lendo informações do formulário...');
       processObject = getManualFormData(cleanCNJ);
     }
 
     if (processObject) {
+      updateStatus('Processo localizado com sucesso!', `Importando partes, classe e ${processObject.movimentos?.length || 0} movimentações...`, false, true);
+      
       const added = await ProcessService.add(processObject);
       if (added === true) {
         processObject.expertInfo = getInitialExpertInfo(processObject);
         await ProcessService.update(processObject);
         showToast(`Processo ${formatProcessNumber(processObject.numeroProcesso)} cadastrado com sucesso!`);
-        closeDialog('register-process-dialog');
+        setTimeout(() => closeDialog('register-process-dialog'), 800);
         await renderDashboard();
       } else if (added === 'reactivated') {
         processObject.expertInfo = getInitialExpertInfo(processObject);
         await ProcessService.update(processObject);
         showToast(`Processo ${formatProcessNumber(processObject.numeroProcesso)} reativado com sucesso!`);
-        closeDialog('register-process-dialog');
+        setTimeout(() => closeDialog('register-process-dialog'), 800);
         await renderDashboard();
       } else {
+        updateStatus('Processo já cadastrado', 'Este processo já consta em seu painel de monitoramento.', true);
         showToast('Este processo já está cadastrado para monitoramento.');
       }
     }
   } catch (error) {
     console.error(error);
+    updateStatus('Não foi possível obter dados automáticos', error.message || 'O tribunal demorou a responder ou o processo não foi encontrado.', true);
     
     // O CNJ falhou ou deu timeout. Abre o formulário manual automaticamente com o tribunal pré-selecionado!
     document.getElementById('reg-auto-search').checked = false;
@@ -1577,13 +1637,13 @@ async function handleRegisterSubmit() {
     }
     
     if (error.message.includes('não localizado') || error.message.includes('indisponível')) {
-      showToast('Este processo não foi localizado na base de dados do CNJ. Por favor, insira os dados nos campos manuais abaixo.', 8000);
+      showToast('Este processo não foi localizado na base do Datajud. Insira os dados manualmente abaixo.', 8000);
     } else {
-      showToast('A API do Datajud está instável ou lenta no momento. O formulário manual foi liberado com o tribunal pré-selecionado.', 8000);
+      showToast('A API do Datajud demorou a responder. O formulário manual foi liberado abaixo com o tribunal pré-selecionado.', 8000);
     }
   } finally {
     btnConfirm.disabled = false;
-    btnText.textContent = 'Cadastrar';
+    if (btnText) btnText.textContent = 'Cadastrar';
     if (btnIcon) btnIcon.className = 'material-symbols-rounded';
   }
 }
@@ -1667,7 +1727,7 @@ function mapDatajudProcess(hit, defaultCourt) {
     return { nome, polo, tipo, numeroDocumentoPrincipal };
   });
 
-  // Movimentos (Une os detalhes de complementos e textos de andamento)
+  // Movimentos (Une os detalhes e ordena da mais recente para a mais antiga)
   const movimentos = (src.movimentos || []).map(m => {
     const complementos = m.complementosTabelados 
       ? m.complementosTabelados.map(c => `${c.nome}: ${c.valor}`).join(', ') 
@@ -1679,7 +1739,7 @@ function mapDatajudProcess(hit, defaultCourt) {
       dataHora: m.dataHora,
       detalhes: detalhes
     };
-  });
+  }).sort((a, b) => new Date(b.dataHora || 0) - new Date(a.dataHora || 0));
 
   return {
     id: hit._id || `${src.tribunal}_${src.numeroProcesso}`,
@@ -1697,140 +1757,72 @@ function mapDatajudProcess(hit, defaultCourt) {
   };
 }
 
-// Executa a busca real no servidor proxy
-// Retorna registros simulados para processos de teste locais (evita erros em buscas reais no Datajud)
-function getMockSearchHits(cleanCNJ) {
-  if (cleanCNJ === '00260321320088260309') {
-    return [
-      {
-        _id: 'TJSP_00260321320088260309',
-        _source: {
-          numeroProcesso: '0026032-13.2008.8.26.0309',
-          tribunal: 'TJSP',
-          grau: 'G1',
-          classe: { codigo: 11, nome: 'Procedimento Comum Cível' },
-          assuntos: [{ codigo: 7779, nome: 'Indenização por Dano Moral' }, { codigo: 10437, nome: 'Nomeação / Escusa de Perito' }],
-          orgaoJulgador: { codigo: 309, nome: '2ª Vara Cível - Foro de Jundiaí' },
-          dataAjuizamento: '2008-05-14T09:00:00.000Z',
-          dataHoraUltimaAtualizacao: new Date().toISOString(),
-          formato: { nome: 'Físico / Digitalizado' },
-          partes: [
-            { nome: 'Marcos Roberto de Souza', polo: 'ATIVO', tipo: 'Física', numeroDocumentoPrincipal: '12345678900' },
-            { nome: 'Seguradora Porto Real S/A', polo: 'PASSIVO', tipo: 'Jurídica', numeroDocumentoPrincipal: '98765432000199' }
-          ],
-          movimentos: [
-            {
-              nome: 'Nomeação de Perito',
-              dataHora: '2026-07-15T14:30:00.000Z',
-              texto: 'Fica nomeado o perito cadastrado nos autos para apresentar proposta de honorários.'
-            },
-            {
-              nome: 'Juntada de Petição',
-              dataHora: '2026-06-25T11:15:00.000Z',
-              texto: 'Petição de manifestação das partes juntada aos autos.'
-            },
-            {
-              nome: 'Despacho',
-              dataHora: '2026-06-18T16:00:00.000Z',
-              texto: 'Mero expediente. Digam as partes sobre as provas que pretendem produzir.'
-            },
-            {
-              nome: 'Citação',
-              dataHora: '2008-06-10T10:00:00.000Z',
-              texto: 'Carta de citação expedida e entregue ao destinatário.'
-            },
-            {
-              nome: 'Distribuição',
-              dataHora: '2008-05-14T09:00:00.000Z',
-              texto: 'Distribuído por sorteio à 2ª Vara Cível da Comarca de Jundiaí.'
-            }
-          ]
-        }
-      }
-    ];
-  }
-  return null;
-}
-
-// Gera uma query Elasticsearch multi-formato ultrarrobusta para o Datajud (suporta CNJ limpo, formatado e wildcard)
-function buildDatajudQuery(cleanCNJ, size = 1) {
+// Executa a busca real no servidor proxy com validação estrita de correspondência do número CNJ
+async function fetchProcessFromAPI(cleanCNJ, courtAlias, onProgress) {
   const formattedCNJ = cleanCNJ.length === 20
     ? `${cleanCNJ.substring(0,7)}-${cleanCNJ.substring(7,9)}.${cleanCNJ.substring(9,13)}.${cleanCNJ.substring(13,14)}.${cleanCNJ.substring(14,16)}.${cleanCNJ.substring(16,20)}`
     : cleanCNJ;
 
-  let wildcardPattern = cleanCNJ;
-  if (cleanCNJ.length === 20) {
-    const pN = cleanCNJ.substring(0, 7);
-    const pD = cleanCNJ.substring(7, 9);
-    const pA = cleanCNJ.substring(9, 13);
-    const pJ = cleanCNJ.substring(13, 14);
-    const pT = cleanCNJ.substring(14, 16);
-    const pO = cleanCNJ.substring(16, 20);
-    wildcardPattern = `*${pN}*${pD}*${pA}*${pJ}*${pT}*${pO}*`;
-  } else {
-    wildcardPattern = `*${cleanCNJ}*`;
-  }
+  const queryAttempts = [
+    { label: 'Consulta pelo número formatado CNJ', query: { size: 5, query: { match_phrase: { numeroProcesso: formattedCNJ } } } },
+    { label: 'Consulta por número contínuo', query: { size: 5, query: { match: { numeroProcesso: cleanCNJ } } } },
+    { label: 'Consulta por termo exato', query: { size: 5, query: { term: { numeroProcesso: cleanCNJ } } } }
+  ];
 
-  return {
-    "size": size,
-    "query": {
-      "bool": {
-        "should": [
-          { "match": { "numeroProcesso": cleanCNJ } },
-          { "match": { "numeroProcesso": formattedCNJ } },
-          { "match_phrase": { "numeroProcesso": cleanCNJ } },
-          { "match_phrase": { "numeroProcesso": formattedCNJ } },
-          { "term": { "numeroProcesso": cleanCNJ } },
-          { "term": { "numeroProcesso": formattedCNJ } },
-          { "wildcard": { "numeroProcesso": wildcardPattern } }
-        ],
-        "minimum_should_match": 1
-      }
+  let matchedHit = null;
+  let lastErrorMsg = null;
+
+  for (let i = 0; i < queryAttempts.length; i++) {
+    const attempt = queryAttempts[i];
+    if (onProgress) {
+      onProgress(`Consultando Datajud (${courtAlias.toUpperCase()})...`, `Passo ${i + 1}/${queryAttempts.length}: ${attempt.label}...`);
     }
-  };
-}
 
-// Executa a busca real no servidor proxy
-async function fetchProcessFromAPI(cleanCNJ, courtAlias) {
-  // INTERCEPÇÃO DE SIMULAÇÃO LOCAL PARA TESTES DO USUÁRIO
-  const mockHits = getMockSearchHits(cleanCNJ);
-  if (mockHits) {
-    console.log('🔮 [Simulador] Interceptando busca de processo de teste do usuário.');
-    return mapDatajudProcess(mockHits[0], courtAlias);
-  }
-
-  const query = buildDatajudQuery(cleanCNJ, 1);
-
-  const response = await authFetch('/api/search', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ''
-    },
-    body: JSON.stringify({
-      tribunal: courtAlias,
-      query: query,
-      timeout: 30000 // Timeout de 30 segundos para conexões lentas do CNJ
-    })
-  });
-
-  if (!response.ok) {
-    let errMsg = 'Falha de conexão com o Datajud.';
     try {
-      const errJSON = await response.json();
-      errMsg = errJSON.error || errMsg;
-    } catch(ex) {}
-    throw new Error(errMsg);
+      const response = await authFetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': '' },
+        body: JSON.stringify({
+          tribunal: courtAlias,
+          query: attempt.query,
+          timeout: 30000
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const hits = data.hits?.hits || [];
+        
+        // VALIDAÇÃO EXPLICITA E RÍGIDA: O número retornado DEVE ser exatamente o número solicitado!
+        for (const h of hits) {
+          const hitNum = (h._source?.numeroProcesso || '').replace(/[^0-9]/g, '');
+          if (hitNum === cleanCNJ) {
+            matchedHit = h;
+            console.log(`[Datajud Guard] Processo exatamente correspondente localizado na tentativa ${i + 1}!`);
+            break;
+          } else {
+            console.warn(`[Datajud Guard] Descartado processo divergente retornado pelo tribunal (${hitNum} !== ${cleanCNJ}).`);
+          }
+        }
+
+        if (matchedHit) break;
+      } else {
+        try {
+          const errData = await response.json();
+          lastErrorMsg = errData.error || errData.details;
+        } catch(ex) {}
+      }
+    } catch (err) {
+      console.warn(`[Datajud] Erro na tentativa ${i + 1}:`, err);
+      lastErrorMsg = err.message;
+    }
   }
 
-  const data = await response.json();
-  const hits = data.hits?.hits || [];
-
-  if (hits.length === 0) {
-    throw new Error(`Processo não localizado ou indisponível temporariamente na API do tribunal ${courtAlias.toUpperCase()}.`);
+  if (!matchedHit) {
+    throw new Error(`O processo nº ${formattedCNJ} não foi localizado na base oficial do Datajud (${courtAlias.toUpperCase()}). Por favor, anexe o arquivo PDF do processo para extrair os dados reais.`);
   }
 
-  const mapped = mapDatajudProcess(hits[0], courtAlias);
+  const mapped = mapDatajudProcess(matchedHit, courtAlias);
   console.log('[Datajud] Processo mapeado:', {
     numero: mapped.numeroProcesso,
     tribunal: mapped.tribunal,
@@ -2515,9 +2507,14 @@ async function openProcessDetails(process) {
   }
 
   // Data de última busca/sincronização
+  const lastCheckedStr = process.lastChecked ? new Date(process.lastChecked).toLocaleString('pt-BR') : 'Nunca realizada';
   const lblChecked = document.getElementById('modal-last-checked-label');
   if (lblChecked) {
-    lblChecked.textContent = `Última busca: ${process.lastChecked ? new Date(process.lastChecked).toLocaleString('pt-BR') : 'Nunca'}`;
+    lblChecked.textContent = `Última busca: ${lastCheckedStr}`;
+  }
+  const lblHistoryChecked = document.getElementById('modal-history-last-update');
+  if (lblHistoryChecked) {
+    lblHistoryChecked.textContent = lastCheckedStr;
   }
 
   // Preenche metadados
@@ -2847,55 +2844,89 @@ async function syncSingleProcessSilently(processNumber) {
     const courtAlias = detectCourtFromCNJ(cleanCNJ);
     if (!courtAlias) return;
 
-    const query = buildDatajudQuery(cleanCNJ, 1);
+    const formattedCNJ = cleanCNJ.length === 20
+      ? `${cleanCNJ.substring(0,7)}-${cleanCNJ.substring(7,9)}.${cleanCNJ.substring(9,13)}.${cleanCNJ.substring(13,14)}.${cleanCNJ.substring(14,16)}.${cleanCNJ.substring(16,20)}`
+      : cleanCNJ;
 
     let hits = [];
-    const mockHits = getMockSearchHits(cleanCNJ);
-    if (mockHits) {
-      hits = mockHits;
-    } else {
-      const response = await authFetch('/api/search', {
+    const response = await authFetch('/api/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tribunal: courtAlias,
+        query: { size: 1, query: { match: { numeroProcesso: cleanCNJ } } },
+        timeout: 25000
+      })
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    hits = data.hits?.hits || [];
+
+    if (hits.length === 0) {
+      // Tenta busca alternativa por formato CNJ se a busca limpa não retornar hits
+      const resp2 = await authFetch('/api/search', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ''
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tribunal: courtAlias,
-          query: query,
-          timeout: 25000 // Limite de 25 segundos para tolerar API lenta do Datajud
+          query: { size: 1, query: { match_phrase: { numeroProcesso: formattedCNJ } } },
+          timeout: 25000
         })
       });
-      if (!response.ok) return;
-      const data = await response.json();
-      hits = data.hits?.hits || [];
+      if (resp2.ok) {
+        const data2 = await resp2.json();
+        hits = data2.hits?.hits || [];
+      }
     }
 
-    if (hits.length > 0) {
-      const updatedProc = mapDatajudProcess(hits[0], courtAlias);
-      const apiUpdate = updatedProc.dataHoraUltimaAtualizacao;
+    const matchedHit = hits.find(h => (h._source?.numeroProcesso || '').replace(/[^0-9]/g, '') === cleanCNJ);
+
+    if (matchedHit) {
+      const updatedProc = mapDatajudProcess(matchedHit, courtAlias);
+      proc.lastChecked = new Date().toISOString();
+
+      if (updatedProc.classe?.nome) proc.classe = updatedProc.classe;
+      if (updatedProc.assuntos?.length) proc.assuntos = updatedProc.assuntos;
+      if (updatedProc.orgaoJulgador?.nome) proc.orgaoJulgador = updatedProc.orgaoJulgador;
+      if (updatedProc.partes?.length) proc.partes = updatedProc.partes;
+      if (updatedProc.dataAjuizamento) proc.dataAjuizamento = updatedProc.dataAjuizamento;
+
       const apiMovs = updatedProc.movimentos?.length || 0;
       const localMovs = proc.movimentos?.length || 0;
 
-      if (apiUpdate !== proc.dataHoraUltimaAtualizacao || apiMovs > localMovs) {
-        const oldMovsCount = localMovs;
-        proc.dataHoraUltimaAtualizacao = apiUpdate;
-        proc.movimentos = updatedProc.movimentos;
-        proc.hasUpdate = true;
-        
-        await ProcessService.update(proc);
-        
-        // Se o processo que está atualmente aberto for o mesmo que atualizou, atualiza a tela dinamicamente!
-        if (activeProcess && activeProcess.numeroProcesso === processNumber) {
-          activeProcess = proc;
-          
-          document.getElementById('modal-last-movement-desc').textContent = proc.movimentos[0]?.detalhes || proc.movimentos[0]?.nome || '-';
-          document.getElementById('modal-last-movement-date').textContent = new Date(proc.movimentos[0]?.dataHora).toLocaleString('pt-BR');
-          
-          document.getElementById('modal-mov-count').textContent = proc.movimentos.length;
-          const timeline = document.getElementById('modal-timeline');
+      if (apiMovs > 0) {
+        // Se a API trouxe andamentos, atualiza a lista e flag
+        const isDummyLocal = localMovs === 1 && (proc.movimentos[0]?.nome === 'Cadastro de Processo' || proc.movimentos[0]?.detalhes === 'Cadastro de Processo');
+        if (isDummyLocal || apiMovs >= localMovs || updatedProc.dataHoraUltimaAtualizacao !== proc.dataHoraUltimaAtualizacao) {
+          proc.dataHoraUltimaAtualizacao = updatedProc.dataHoraUltimaAtualizacao;
+          proc.movimentos = updatedProc.movimentos;
+          proc.hasUpdate = true;
+        }
+      }
+
+      await ProcessService.update(proc);
+
+      // Se o processo que está atualmente aberto for o mesmo que atualizou, atualiza a tela dinamicamente!
+      if (activeProcess && activeProcess.numeroProcesso === processNumber) {
+        activeProcess = proc;
+
+        const lastCheckedFormatted = new Date(proc.lastChecked).toLocaleString('pt-BR');
+        const lblChecked = document.getElementById('modal-last-checked-label');
+        if (lblChecked) lblChecked.textContent = `Última busca: ${lastCheckedFormatted}`;
+
+        const lblHistoryChecked = document.getElementById('modal-history-last-update');
+        if (lblHistoryChecked) lblHistoryChecked.textContent = lastCheckedFormatted;
+
+        const lastMov = proc.movimentos?.[0];
+        if (lastMov) {
+          document.getElementById('modal-last-movement-desc').textContent = lastMov.detalhes || lastMov.nome || '-';
+          document.getElementById('modal-last-movement-date').textContent = new Date(lastMov.dataHora).toLocaleString('pt-BR');
+        }
+
+        document.getElementById('modal-mov-count').textContent = proc.movimentos?.length || 0;
+        const timeline = document.getElementById('modal-timeline');
+        if (timeline) {
           timeline.innerHTML = '';
-          
           proc.movimentos.forEach(mov => {
             const item = document.createElement('div');
             item.className = 'timeline-item';
@@ -2909,13 +2940,12 @@ async function syncSingleProcessSilently(processNumber) {
             `;
             timeline.appendChild(item);
           });
-          
-          renderPdfStatusCard(proc);
         }
 
-        showToast("Novas publicações encontradas no Datajud! Base de dados local atualizada.");
-        await renderDashboard();
+        renderPdfStatusCard(proc);
       }
+
+      await renderDashboard();
     }
   } catch (err) {
     console.warn(`[Auto-Sync] Falha silenciosa ao sincronizar processo ${processNumber}:`, err);
@@ -2939,38 +2969,50 @@ async function syncSingleProcessManually(processNumber, btnEl) {
     const courtAlias = detectCourtFromCNJ(cleanCNJ);
     if (!courtAlias) throw new Error('Não foi possível identificar o tribunal a partir do número do CNJ.');
 
-    const query = buildDatajudQuery(cleanCNJ, 50);
+    const formattedCNJ = cleanCNJ.length === 20
+      ? `${cleanCNJ.substring(0,7)}-${cleanCNJ.substring(7,9)}.${cleanCNJ.substring(9,13)}.${cleanCNJ.substring(13,14)}.${cleanCNJ.substring(14,16)}.${cleanCNJ.substring(16,20)}`
+      : cleanCNJ;
 
     let hits = [];
-    const mockHits = getMockSearchHits(cleanCNJ);
-    if (mockHits) {
-      hits = mockHits;
-    } else {
-      const response = await authFetch('/api/search', {
+    const response = await authFetch('/api/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tribunal: courtAlias,
+        query: { size: 1, query: { match: { numeroProcesso: cleanCNJ } } },
+        timeout: 25000
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || data.details || 'Falha ao se comunicar com o Datajud.');
+    }
+    hits = data.hits?.hits || [];
+
+    if (hits.length === 0) {
+      const resp2 = await authFetch('/api/search', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ''
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tribunal: courtAlias,
-          query: query,
+          query: { size: 1, query: { match_phrase: { numeroProcesso: formattedCNJ } } },
           timeout: 25000
         })
       });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || data.details || 'Falha ao se comunicar com o Datajud.');
+      if (resp2.ok) {
+        const data2 = await resp2.json();
+        hits = data2.hits?.hits || [];
       }
-      hits = data.hits?.hits || [];
     }
 
-    if (hits.length === 0) {
-      throw new Error(`Processo não localizado no banco do tribunal ${courtAlias.toUpperCase()}. Anexe o PDF do processo para consultar manualmente.`);
+    const matchedHit = hits.find(h => (h._source?.numeroProcesso || '').replace(/[^0-9]/g, '') === cleanCNJ);
+
+    if (!matchedHit) {
+      throw new Error(`Processo nº ${formattedCNJ} não localizado no Datajud (${courtAlias.toUpperCase()}). Anexe o PDF do processo para realizar a consulta.`);
     }
 
-    const updatedProc = mapDatajudProcess(hits[0], courtAlias);
+    const updatedProc = mapDatajudProcess(matchedHit, courtAlias);
     const apiUpdate = updatedProc.dataHoraUltimaAtualizacao;
     
     proc.dataHoraUltimaAtualizacao = apiUpdate;
@@ -3009,9 +3051,14 @@ async function syncSingleProcessManually(processNumber, btnEl) {
         });
       }
       
+      const lastCheckedFormatted = new Date(proc.lastChecked).toLocaleString('pt-BR');
       const lblChecked = document.getElementById('modal-last-checked-label');
       if (lblChecked) {
-        lblChecked.textContent = `Última busca: ${new Date(proc.lastChecked).toLocaleString('pt-BR')}`;
+        lblChecked.textContent = `Última busca: ${lastCheckedFormatted}`;
+      }
+      const lblHistoryChecked = document.getElementById('modal-history-last-update');
+      if (lblHistoryChecked) {
+        lblHistoryChecked.textContent = lastCheckedFormatted;
       }
       
       renderPdfStatusCard(proc);
@@ -4825,7 +4872,12 @@ async function performAIAnalysis() {
     activeProcess.aiData.result = result;
     await ProcessService.update(activeProcess);
 
-    renderAIResult(result, container);
+    // Aplica automaticamente os campos extraídos na Ficha Técnica do Perito
+    if (result && result.fields) {
+      applyAIFields(result);
+    } else {
+      renderAIResult(result, container);
+    }
   } catch (err) {
     console.error('[AI] Erro:', err);
     container.innerHTML = `

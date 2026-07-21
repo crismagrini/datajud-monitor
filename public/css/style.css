@@ -2157,3 +2157,40 @@ button, input, select, textarea {
     color: #c481ff;
   }
 }
+
+/* ==========================================================================
+   ANIMAÇÕES DE CARREGAMENTO E PROGRESSO AO VIVO (REGISTRO DATAJUD)
+   ========================================================================== */
+
+@keyframes spinSlow {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.05); }
+}
+
+@keyframes shimmerProgress {
+  0% { background-position: -200px 0; }
+  100% { background-position: 200px 0; }
+}
+
+.spinning-icon {
+  animation: spinSlow 1.1s linear infinite;
+  display: inline-block;
+}
+
+.pulsing-badge {
+  animation: pulseGlow 1.4s ease-in-out infinite;
+}
+
+.loading-progress-bar {
+  height: 4px;
+  width: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--md-sys-color-primary-container) 25%, var(--md-sys-color-primary) 50%, var(--md-sys-color-primary-container) 75%);
+  background-size: 400px 100%;
+  animation: shimmerProgress 1.4s infinite linear;
+}

@@ -551,7 +551,7 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
           model: model,
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.2,
-          max_tokens: 1200
+          max_tokens: 4000
         })
       });
 
