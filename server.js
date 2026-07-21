@@ -499,7 +499,8 @@ app.post('/api/search', authenticateToken, async (req, res) => {
 
     if (!response.ok) {
       console.error(`[Proxy] Erro da API CNJ (${response.status}):`, data);
-      return res.status(response.status).json({
+      const statusCode = (response.status === 401 || response.status === 403) ? 502 : response.status;
+      return res.status(statusCode).json({
         error: 'Erro retornado pela API do Datajud.',
         details: data
       });
@@ -579,8 +580,9 @@ app.post('/api/ai/analyze', authenticateToken, async (req, res) => {
           attempts = 0;
           continue;
         }
-        return res.status(response.status).json({
-          error: 'Erro retornado pela API Groq.',
+        const statusCode = (response.status === 401 || response.status === 403) ? 502 : response.status;
+        return res.status(statusCode).json({
+          error: 'Erro retornado pela API Groq. Verifique a variável GROQ_API_KEY no painel do Render.',
           details: data
         });
       }

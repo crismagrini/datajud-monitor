@@ -66,6 +66,16 @@ async function authFetch(url, options = {}) {
     const response = await fetch(url, options);
     
     if (response.status === 401 || response.status === 403) {
+      const clone = response.clone();
+      try {
+        const errData = await clone.json();
+        if (errData && errData.error === 'CONTA_BLOQUEADA_TRIAL') {
+          showToast(errData.message || 'Seu período de testes de 7 dias expirou. Faça uma assinatura para continuar.', 'warning');
+          openDialog('billing-dialog');
+          return response;
+        }
+      } catch (e) {}
+
       jwtToken = null;
       currentUserEmail = null;
       localStorage.removeItem('jwt_token');
