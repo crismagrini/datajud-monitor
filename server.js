@@ -90,8 +90,8 @@ const PORT = process.env.PORT || 3000;
 // Chave pública padrão do CNJ Datajud obtida da documentação oficial
 const DEFAULT_API_KEY = 'cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==';
 
-// Chave da API Groq para análise de IA
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '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';
+// Chave da API Groq para análise de IA (configurada via variável de ambiente GROQ_API_KEY)
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
 app.use(cors());
 app.use(express.json({ limit: '200mb' }));
