@@ -946,45 +946,145 @@
   <section class="pricing" id="pricing">
     <div class="section-header">
       <h2>Planos Simples e Transparentes</h2>
-      <p>Escolha a assinatura ideal e garanta mais produtividade nas suas perícias judiciais.</p>
+      <p>Escolha a assinatura ideal ou experimente o sistema por 7 dias totalmente grátis.</p>
     </div>
 
-    <div class="pricing-toggle">
-      <span class="toggle-label active" id="label-monthly">Assinatura Mensal</span>
-      <label class="switch">
-        <input type="checkbox" id="pricing-switch" checked>
-        <span class="slider"></span>
-      </label>
-      <span class="toggle-label" id="label-annual">Assinatura Anual <span class="pricing-badge">Economize 28%</span></span>
+    <!-- Banner Promocional de 4 Meses Grátis & Teste Grátis -->
+    <div style="max-width: 900px; margin: 0 auto 32px auto; display: flex; flex-direction: column; gap: 12px;">
+      <div style="background: linear-gradient(135deg, #1e1b4b, #4c1d95); border: 2px solid #a7f3d0; color: white; border-radius: 16px; padding: 18px 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; box-shadow: 0 10px 25px rgba(124, 58, 237, 0.3);">
+        <div style="display: flex; align-items: center; gap: 16px;">
+          <span class="material-symbols-rounded" style="font-size: 38px; color: #34d399; background: rgba(52, 211, 153, 0.15); padding: 10px; border-radius: 14px;">card_giftcard</span>
+          <div>
+            <h3 style="margin: 0; font-size: 18px; font-weight: 800; color: #f8fafc;">🎁 PROMOÇÃO: GANHE 4 MESES DE ACESSO GRÁTIS!</h3>
+            <p style="margin: 4px 0 0 0; font-size: 14px; color: #cbd5e1;">Assinando a opção **Anual (R$ 399,20)** você paga equivalente a 8 meses e **ganha 4 meses inteiramente grátis** (R$ 33,26/mês)!</p>
+          </div>
+        </div>
+        <button onclick="openAsaasCheckoutModal('annual')" style="background: #10b981; color: white; border: none; font-weight: 800; padding: 12px 24px; border-radius: 10px; cursor: pointer; font-size: 14px; white-space: nowrap; transition: transform 0.2s;">
+          Garantir 4 Meses Grátis
+        </button>
+      </div>
+
+      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; border-radius: 12px; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 12px; font-size: 14px;">
+          <span class="material-symbols-rounded" style="color: #16a34a;">verified_user</span>
+          <span><strong>Quer testar antes de pagar?</strong> Você possui <strong>7 dias de teste grátis</strong>, sem necessidade de cadastrar cartão de crédito!</span>
+        </div>
+        <a href="/app" style="color: #15803d; font-weight: 700; font-size: 13px; text-decoration: underline;">Cadastrar Grátis para Testar &rarr;</a>
+      </div>
     </div>
 
-    <div class="pricing-cards">
-      <!-- Plano Único Flexível -->
-      <div class="pricing-card featured" id="card-plan">
-        <h3>Acesso Ilimitado</h3>
-        <p class="desc">A ferramenta completa para gerenciar as suas perícias do início ao fim.</p>
+    <div class="pricing-cards" style="display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; max-width: 900px; margin: 0 auto;">
+      <!-- Plano Mensal -->
+      <div class="pricing-card" id="card-monthly" style="flex: 1; min-width: 300px; max-width: 400px;">
+        <h3>Plano Mensal</h3>
+        <p class="desc">Acesso completo mensal com total flexibilidade e sem fidelidade.</p>
         
         <div class="price-block">
           <span class="price-currency">R$</span>
-          <span class="price-value" id="price-amount">49,90</span>
-          <span class="price-period" id="price-period">/mês</span>
+          <span class="price-value">49,90</span>
+          <span class="price-period">/mês</span>
         </div>
 
         <ul class="pricing-features">
           <li><span class="check material-symbols-rounded">check_circle</span> Processos monitorados ilimitados</li>
-          <li><span class="check material-symbols-rounded">check_circle</span> Análise IA profunda de Fichas Técnicas</li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Análise IA profunda do PDF do Processo</li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Extração do Perito Nomeado</li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Sugestão de Tarefas CPC do Perito</li>
           <li><span class="check material-symbols-rounded">check_circle</span> Atualização monetária diária TJSP</li>
-          <li><span class="check material-symbols-rounded">check_circle</span> Linkagem de decisões e marcação de páginas</li>
-          <li><span class="check material-symbols-rounded">check_circle</span> Agenda de prazos integrados com o CPC</li>
-          <li><span class="check material-symbols-rounded">check_circle</span> Sem limite de upload de PDFs</li>
         </ul>
 
-        <a href="/app" class="btn-pricing" id="btn-subscribe">
-          Assinar Agora
-        </a>
+        <button class="btn-pricing" onclick="openAsaasCheckoutModal('monthly')" style="width: 100%; border: none; cursor: pointer;">
+          Assinar Plano Mensal (R$ 49,90)
+        </button>
+      </div>
+
+      <!-- Plano Anual (Destaque) -->
+      <div class="pricing-card featured" id="card-annual" style="flex: 1; min-width: 300px; max-width: 400px; border: 2px solid #7c3aed; position: relative;">
+        <span style="position: absolute; top: -14px; right: 24px; background: #10b981; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 700;">🎁 GANHE 4 MESES GRÁTIS</span>
+        <h3>Plano Anual</h3>
+        <p class="desc">Garanta o menor valor (R$ 399,20/ano = R$ 33,26/mês). Pague 8 meses e <strong>ganhe 4 meses grátis</strong>.</p>
+        
+        <div class="price-block">
+          <span class="price-currency">R$</span>
+          <span class="price-value">399,20</span>
+          <span class="price-period">/ano</span>
+        </div>
+
+        <ul class="pricing-features">
+          <li><span class="check material-symbols-rounded">check_circle</span> <strong>4 Meses de Acesso Grátis inclusos</strong></li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Equivalente a apenas R$ 33,26 por mês</li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Liberação imediata e sem burocracia</li>
+          <li><span class="check material-symbols-rounded">check_circle</span> Suporte prioritário via WhatsApp</li>
+        </ul>
+
+        <button class="btn-pricing" onclick="openAsaasCheckoutModal('annual')" style="width: 100%; border: none; cursor: pointer; background: #7c3aed; color: white;">
+          Assinar Plano Anual (4 Meses Grátis)
+        </button>
       </div>
     </div>
   </section>
+
+  <!-- MODAL CHECKOUT ASAAS DA LANDING PAGE -->
+  <div id="asaas-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 9999; align-items: center; justify-content: center; padding: 16px;">
+    <div style="background: #ffffff; width: 100%; max-width: 500px; border-radius: 16px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.2); overflow: hidden; font-family: inherit;">
+      <div style="background: linear-gradient(135deg, #7c3aed, #4c1d95); color: white; padding: 20px 24px; display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin: 0; font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+          <span class="material-symbols-rounded">lock</span> Assinar Radar Perito via Asaas
+        </h3>
+        <button onclick="closeAsaasCheckoutModal()" style="background: transparent; border: none; color: white; cursor: pointer; display: flex; align-items: center;">
+          <span class="material-symbols-rounded">close</span>
+        </button>
+      </div>
+
+      <form id="asaas-checkout-form" style="padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+        <input type="hidden" id="asaas-plan" value="monthly">
+
+        <div style="background: #f3f4f6; border-radius: 8px; padding: 12px 16px; font-size: 14px; color: #374151; display: flex; justify-content: space-between; align-items: center;">
+          <span>Plano Selecionado: <strong id="asaas-plan-title">Mensal (R$ 49,90/mês)</strong></span>
+          <button type="button" onclick="toggleAsaasPlanModal()" style="background: none; border: none; color: #7c3aed; font-weight: 600; cursor: pointer; font-size: 12px; text-decoration: underline;">Alterar</button>
+        </div>
+
+        <div>
+          <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Nome Completo</label>
+          <input type="text" id="asaas-name" required placeholder="Digite seu nome completo" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+        </div>
+
+        <div>
+          <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">E-mail (para login na aplicação)</label>
+          <input type="email" id="asaas-email" required placeholder="seu@email.com" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div>
+            <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">CPF (apenas números)</label>
+            <input type="text" id="asaas-cpf" required placeholder="000.000.000-00" maxlength="14" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+          </div>
+          <div>
+            <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Celular / WhatsApp</label>
+            <input type="tel" id="asaas-phone" placeholder="(00) 90000-0000" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+          </div>
+        </div>
+
+        <div>
+          <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Forma de Pagamento Preferencial</label>
+          <select id="asaas-billing-type" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box; background: white;">
+            <option value="UNDEFINED">PIX, Cartão de Crédito ou Boleto (Checkout Asaas)</option>
+            <option value="PIX">PIX (Aprovação Instantânea)</option>
+            <option value="CREDIT_CARD">Cartão de Crédito</option>
+            <option value="BOLETO">Boleto Bancário</option>
+          </select>
+        </div>
+
+        <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #1e40af; line-height: 1.4;">
+          <strong>ℹ️ Importante:</strong> Após a confirmação do pagamento, seu usuário será criado no sistema e sua <strong>senha temporária será o seu CPF (apenas números)</strong>, com troca obrigatória no primeiro uso.
+        </div>
+
+        <button type="submit" id="btn-submit-asaas" style="background: #7c3aed; color: white; font-weight: 700; border: none; padding: 14px; border-radius: 8px; cursor: pointer; font-size: 15px; display: flex; align-items: center; justify-content: center; gap: 8px; transition: background 0.2s;">
+          <span class="material-symbols-rounded">shield_with_heart</span> Finalizar Assinatura no Asaas
+        </button>
+      </form>
+    </div>
+  </div>
 
   <!-- Seção de FAQ -->
   <section class="faq" id="faq">
@@ -1020,7 +1120,7 @@
           <span class="arrow material-symbols-rounded">expand_more</span>
         </div>
         <div class="faq-answer">
-          Sim. Não existe fidelidade no plano mensal, e você pode cancelar o serviço a qualquer momento com apenas um clique diretamente no painel do usuário. No plano anual, você garante um desconto de 28% parcelado no ano.
+          Sim. Não existe fidelidade no plano mensal, e você pode cancelar o serviço a qualquer momento diretamente com suporte. No plano anual, você garante um desconto especial no valor de R$ 399,20/ano.
         </div>
       </div>
 
@@ -1040,10 +1140,10 @@
   <section class="cta-final">
     <div class="cta-container">
       <h2>Pronto para escalar seu controle de perícias?</h2>
-      <p>Cadastre-se hoje mesmo e ganhe tempo, precisão financeira e segurança nos seus prazos processuais.</p>
-      <a href="/app" class="btn-primary" style="padding: 18px 46px;">
-        Começar Grátis agora
-      </a>
+      <p>Assine hoje mesmo e ganhe tempo, precisão financeira e segurança nos seus prazos processuais.</p>
+      <button onclick="openAsaasCheckoutModal('annual')" class="btn-primary" style="padding: 18px 46px; border: none; cursor: pointer;">
+        Assinar Plano Anual (R$ 399,20)
+      </button>
     </div>
   </section>
 
@@ -1060,32 +1160,85 @@
   </footer>
 
   <script>
-    // Lógica do Toggle de Preços
-    const pricingSwitch = document.getElementById('pricing-switch');
-    const priceAmount = document.getElementById('price-amount');
-    const pricePeriod = document.getElementById('price-period');
-    const labelMonthly = document.getElementById('label-monthly');
-    const labelAnnual = document.getElementById('label-annual');
+    // Função para abrir o Modal de Checkout Asaas
+    function openAsaasCheckoutModal(plan) {
+      const modal = document.getElementById('asaas-modal');
+      const planInput = document.getElementById('asaas-plan');
+      const planTitle = document.getElementById('asaas-plan-title');
 
-    function updatePricing() {
-      if (pricingSwitch.checked) {
-        // Plano Anual
-        priceAmount.textContent = '49,90';
-        pricePeriod.textContent = '/mês (cobrado anualmente)';
-        labelAnnual.classList.add('active');
-        labelMonthly.classList.remove('active');
+      planInput.value = plan;
+      if (plan === 'annual') {
+        planTitle.textContent = 'Anual (R$ 399,20/ano)';
       } else {
-        // Plano Mensal
-        priceAmount.textContent = '69,90';
-        pricePeriod.textContent = '/mês';
-        labelMonthly.classList.add('active');
-        labelAnnual.classList.remove('active');
+        planTitle.textContent = 'Mensal (R$ 49,90/mês)';
       }
+
+      modal.style.display = 'flex';
     }
 
-    pricingSwitch.addEventListener('change', updatePricing);
-    // Inicialização
-    updatePricing();
+    function closeAsaasCheckoutModal() {
+      document.getElementById('asaas-modal').style.display = 'none';
+    }
+
+    function toggleAsaasPlanModal() {
+      const currentPlan = document.getElementById('asaas-plan').value;
+      const nextPlan = currentPlan === 'annual' ? 'monthly' : 'annual';
+      openAsaasCheckoutModal(nextPlan);
+    }
+
+    // Máscara dinâmica de CPF
+    document.getElementById('asaas-cpf')?.addEventListener('input', (e) => {
+      let v = e.target.value.replace(/\D/g, '');
+      if (v.length > 11) v = v.substring(0, 11);
+      v = v.replace(/(\d{3})(\d)/, '$1.$2');
+      v = v.replace(/(\d{3})(\d)/, '$1.$2');
+      v = v.replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+      e.target.value = v;
+    });
+
+    // Envio do Formulário de Checkout Asaas
+    document.getElementById('asaas-checkout-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('btn-submit-asaas');
+      const plan = document.getElementById('asaas-plan').value;
+      const name = document.getElementById('asaas-name').value;
+      const email = document.getElementById('asaas-email').value;
+      const cpf = document.getElementById('asaas-cpf').value;
+      const phone = document.getElementById('asaas-phone').value;
+      const billingType = document.getElementById('asaas-billing-type').value;
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-rounded" style="animation: spin 1s linear infinite;">progress_activity</span> Gerando cobrança no Asaas...';
+
+      try {
+        const resp = await fetch('/api/payment/asaas-checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, cpf, phone, plan, billingType })
+        });
+
+        const data = await resp.json();
+
+        if (resp.ok) {
+          if (data.simulated && data.url) {
+            window.location.href = data.url;
+          } else if (data.url) {
+            window.location.href = data.url;
+          } else {
+            alert('Cobrança gerada no Asaas com sucesso!\n\nApós o pagamento, o seu acesso ao Radar Perito será ativado e a sua senha inicial será o seu CPF.');
+            closeAsaasCheckoutModal();
+          }
+        } else {
+          alert('Erro no checkout: ' + (data.error || 'Não foi possível gerar a cobrança.'));
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Erro ao conectar ao servidor de pagamentos.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="material-symbols-rounded">shield_with_heart</span> Finalizar Assinatura no Asaas';
+      }
+    });
 
     // Lógica dos Acordeões do FAQ
     const faqQuestions = document.querySelectorAll('.faq-question');
@@ -1094,7 +1247,6 @@
         const item = q.parentElement;
         const isActive = item.classList.contains('active');
         
-        // Fecha todos os outros FAQs
         document.querySelectorAll('.faq-item').forEach(el => el.classList.remove('active'));
         
         if (!isActive) {

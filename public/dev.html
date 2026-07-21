@@ -666,13 +666,13 @@
               <thead>
                 <tr>
                   <th>Nome Completo</th>
-                  <th>E-mail</th>
+                  <th>E-mail / Telefone</th>
                   <th>CPF</th>
                   <th>Código Verificação</th>
                   <th>Senha Registrada</th>
-                  <th>Bloqueio Temporário</th>
+                  <th>Status & Bloqueio</th>
                   <th>Criado Em</th>
-                  <th style="width: 150px; text-align: center;">Ações</th>
+                  <th style="width: 180px; text-align: center;">Contato & Ações</th>
                 </tr>
               </thead>
               <tbody id="users-table-body">
@@ -964,16 +964,36 @@
           </div>
         `;
 
+        const phoneClean = (user.phone || '').replace(/[^0-9]/g, '');
+        const firstName = user.name ? user.name.split(' ')[0] : 'Perito';
+        const waMsg = encodeURIComponent(`Olá ${firstName}, vi que você criou sua conta no Radar Perito! Estamos com uma oferta exclusiva no Plano Anual com 4 MESES DE ACESSO GRÁTIS (R$ 399,20 por 12 meses). Quer liberar seu acesso total hoje?`);
+        const waButton = phoneClean.length >= 10 
+          ? `<a href="https://wa.me/55${phoneClean}?text=${waMsg}" target="_blank" class="action-icon-btn" style="background: #059669; color: white; border: none;" title="Chamar no WhatsApp (${user.phone})"><span class="material-symbols-rounded" style="font-size: 18px;">chat</span></a>` 
+          : `<button class="action-icon-btn" disabled style="opacity: 0.35;" title="Telefone não informado"><span class="material-symbols-rounded" style="font-size: 18px;">chat_error</span></button>`;
+
+        const mailMsg = encodeURIComponent(`Olá ${user.name},\n\nAproveite a oferta de lançamento do Radar Perito:\nAssine o Plano Anual (R$ 399,20) e GANHE 4 MESES DE ACESSO GRÁTIS!\n\nAcesse: https://radarperito.com.br`);
+        const mailButton = `<a href="mailto:${user.email}?subject=${encodeURIComponent('Radar Perito - Ganhe 4 Meses Grátis no Plano Anual')}&body=${mailMsg}" class="action-icon-btn" style="background: #2563eb; color: white; border: none;" title="Enviar E-mail Comercial"><span class="material-symbols-rounded" style="font-size: 18px;">mail</span></a>`;
+
         tr.innerHTML = `
-          <td><strong>${user.name}</strong></td>
-          <td>${user.email}</td>
+          <td>
+            <strong>${user.name}</strong>
+            ${user.mustChangePassword ? `<span style="display: block; font-size: 10px; color: #f59e0b; font-weight: 700; margin-top: 2px;">⚠️ Senha Temp. (CPF)</span>` : ''}
+          </td>
+          <td>
+            <div><strong>${user.email}</strong></div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px; display: flex; align-items: center; gap: 4px;">
+              <span class="material-symbols-rounded" style="font-size: 14px;">call</span> ${user.phone || 'Não informado'}
+            </div>
+          </td>
           <td style="font-family: monospace;">${formatCPF(user.cpf)}</td>
           <td style="text-align: center;">${verifiedBadge} <span style="display: block; font-family: monospace; font-size: 12px; font-weight: bold; margin-top: 4px; color: var(--text-muted);">${user.verificationCode || '-'}</span></td>
           <td>${passwordHtml}</td>
           <td>${blockHtml}</td>
           <td>${dateStr}</td>
           <td>
-            <div class="actions-cell" style="justify-content: center;">
+            <div class="actions-cell" style="justify-content: center; gap: 6px;">
+              ${waButton}
+              ${mailButton}
               <button class="action-icon-btn edit" onclick="editUserPassword('${user.email}')" title="Alterar Senha">
                 <span class="material-symbols-rounded" style="font-size: 18px;">key</span>
               </button>

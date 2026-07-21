@@ -491,6 +491,13 @@ function setupAuthEventListeners() {
       localStorage.setItem('user_verified', data.verified ? 'true' : 'false');
       
       document.getElementById('auth-login-form').reset();
+
+      if (data.mustChangePassword) {
+        document.getElementById('auth-screen').style.display = 'none';
+        document.getElementById('force-change-password-dialog').style.display = 'flex';
+        showToast('Primeiro acesso detectado. Cadastre sua nova senha pessoal.', 'warning');
+        return;
+      }
       
       if (data.verified === false) {
         localStorage.setItem('verification_code_test', data._testVerificationCode || '');
@@ -513,12 +520,58 @@ function setupAuthEventListeners() {
     }
   });
 
+  // Submissão do Formulário de Troca Obrigatória de Senha Inicial
+  document.getElementById('form-force-change-password')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const newPass = document.getElementById('input-new-password').value.trim();
+    const confirmPass = document.getElementById('input-confirm-password').value.trim();
+    const btnSave = document.getElementById('btn-save-new-password');
+
+    if (!newPass || newPass.length < 6) {
+      showToast('A nova senha deve possuir no mínimo 6 caracteres.', 'error');
+      return;
+    }
+
+    if (newPass !== confirmPass) {
+      showToast('As senhas digitadas não conferem. Tente novamente.', 'error');
+      return;
+    }
+
+    btnSave.disabled = true;
+    btnSave.innerHTML = '<span class="material-symbols-rounded" style="animation: spin 1s linear infinite;">progress_activity</span> Salvando nova senha...';
+
+    try {
+      const resp = await authFetch('/api/auth/change-initial-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword: newPass })
+      });
+
+      const data = await resp.json();
+      if (resp.ok) {
+        document.getElementById('force-change-password-dialog').style.display = 'none';
+        showDashboard();
+        await renderDashboard();
+        showToast('✓ Senha alterada com sucesso! Seu acesso está liberado.', 'success');
+        setTimeout(syncAllMonitoredSilently, 1000);
+      } else {
+        showToast(data.error || 'Erro ao alterar senha inicial.', 'error');
+      }
+    } catch (err) {
+      showToast('Erro de conexão ao alterar senha.', 'error');
+    } finally {
+      btnSave.disabled = false;
+      btnSave.innerHTML = '<span class="material-symbols-rounded">check_circle</span><span>Salvar Nova Senha e Entrar</span>';
+    }
+  });
+
   // Submissão do Cadastro
   document.getElementById('auth-register-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const email = document.getElementById('reg-email').value.trim();
     const name = document.getElementById('reg-name').value.trim();
     const cpf = document.getElementById('reg-cpf').value.trim();
+    const phone = document.getElementById('reg-phone')?.value.trim() || '';
     const password = document.getElementById('reg-password').value;
     const confirmPassword = document.getElementById('reg-confirm-password').value;
     const msgBox = document.getElementById('auth-message-box');
@@ -557,7 +610,7 @@ function setupAuthEventListeners() {
       const registerResponse = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, name, cpf: cleanCPF })
+        body: JSON.stringify({ email, password, name, cpf: cleanCPF, phone })
       });
 
       const regData = await registerResponse.json();
@@ -4567,8 +4620,8 @@ function buildAIPrompt(proc) {
     let relevantExcerpts = [];
     let currentLength = pdfText.length;
     
-    // Tier 1: Termos jurídicos de nomeação, honorários e prova altamente cruciais
-    const tier1 = ['perito', 'nomeio', 'nomeação', 'honorários', 'depósito', 'arbitro', 'inversão', 'ônus', 'ufesp'];
+    // Tier 1: Termos jurídicos de nomeação do perito, honorários e prova altamente cruciais
+    const tier1 = ['perito', 'perita', 'nomeio', 'nomeação', 'nomeado', 'nomeada', 'designo', 'honorários', 'depósito', 'arbitro', 'inversão', 'ônus', 'ufesp'];
     // Tier 2: Termos secundários de ritos e prazos que podem gerar muito ruído/exceder o buffer
     const tier2 = ['laudo', 'prazo', 'intimação', 'intime', 'gratuita'];
 
@@ -4696,11 +4749,14 @@ function buildAIPrompt(proc) {
 
   return `Você é um assistente jurídico especializado em direito processual civil brasileiro (CPC). Sua função principal e OBRIGAÇÃO MANDATÓRIA ABSOLUTA é EXTRAIR os dados cadastrais do processo e da Ficha Técnica do Expert/Perito a partir do texto do PDF e das seções informadas.
  
-INSTRUÇÕES MANDATÓRIAS DE PREENCHIMENTO:
+INSTRUÇÕES MANDATÓRIAS DE PREENCHIMENTO E BUSCA PROFUNDA DO PERITO NOMEADO:
+- LEIA PROFUNDAMENTE O ARQUIVO PDF EM BUSCA DO NOME DO PERITO NOMEADO: É MANDATÓRIO e OBRIGATÓRIO examinar minuciosamente todas as decisões, despachos, intimações e a capa constantes do PDF em busca da indicação ou nomeação do Perito Judicial (busque por termos como "nomeio perito", "designo como perito", "perito judicial", "perito nomeado", etc.). Preencha o nome completo exato do perito no campo "perito".
 - É OBRIGATÓRIO EXTRAIR E PREENCHER os dados de AUTOR, RÉU, CLASSE, ASSUNTO e ÓRGÃO JULGADOR.
-- Analise a capa e o cabeçalho do PDF (primeiras páginas) e consulte os blocos "PARTES DO PROCESSO" e "DADOS COMPLETOS DO PROCESSO" fornecidos abaixo.
+- É MANDATÓRIO E OBRIGATÓRIO EXAMINAR O PDF PARA DESCOBRIR SE FOI CONCEDIDA A JUSTIÇA GRATUITA (Gratuidade de Justiça / AJG) e a qual parte (ex: 'Sim (Autor)', 'Sim (Réu)', 'Sim (Ambos)', 'Indeferida' ou 'Não informado').
+- É MANDATÓRIO E OBRIGATÓRIO EXAMINAR O PDF PARA DESCOBRIR SE HOUVE A CONCESSÃO DA INVERSÃO DO ÔNUS DA PROVA e se foi concedida em favor do Autor ou do Réu (ex: 'Concedida ao Autor', 'Concedida ao Réu', 'Indeferida' ou 'Não informado').
+- Analise a capa, o cabeçalho e as decisões do PDF e consulte os blocos "PARTES DO PROCESSO" e "DADOS COMPLETOS DO PROCESSO" fornecidos abaixo.
 - NUNCA retorne "Autor Não Informado", "Réu Não Informado", "Ação Judicial" ou "Assunto Geral" no JSON se houver qualquer nome ou dado de processo no PDF ou nos blocos de texto abaixo.
-- As informações de "perito" (nome completo do perito nomeado), "inversaoOnus", "honorarios" e "depositoJudicial" também devem ser extraídas atentamente se presentes no PDF.
+- As informações de "perito" (nome completo do perito nomeado), "justicaGratuita", "inversaoOnus", "honorarios" e "depositoJudicial" também devem ser extraídas atentamente se presentes no PDF.
 
 PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
 {
@@ -4711,8 +4767,9 @@ PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
     "classe": "classe processual exata (ex: 'Procedimento Comum Cível', 'Execução de Título Extrajudicial')",
     "assunto": "assunto principal do processo (ex: 'Indenização por Dano Moral', 'Prestação de Serviços')",
     "orgao": "órgão julgador / vara (ex: '1ª Vara Cível da Comarca de São Paulo')",
-    "perito": "nome completo do perito judicial nomeado extraído do PDF (ou 'Não nomeado' se não encontrado)",
-    "inversaoOnus": "indique se há decisão ou requerimento de inversão do ônus da prova: 'Sim', 'Não' ou 'Não informado'",
+    "perito": "nome completo do perito judicial nomeado extraído após leitura profunda do PDF (ou 'Não nomeado' apenas se não houver perito nomeado)",
+    "justicaGratuita": "indique obrigatoriamente se a Justiça Gratuita foi concedida e a quem: 'Sim (Autor)', 'Sim (Réu)', 'Sim (Ambos)', 'Indeferida' ou 'Não informado'",
+    "inversaoOnus": "indique obrigatoriamente se houve concessão da inversão do ônus da prova e a quem: 'Concedida ao Autor', 'Concedida ao Réu', 'Indeferida' ou 'Não informado'",
     "honorarios": null,
     "depositoJudicial": "indique se houve depósito judicial dos honorários: 'Sim', 'Não', 'Parcial' ou 'Não informado'",
     "valorDeposito": null,
@@ -4720,8 +4777,8 @@ PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
   },
   "tasks": [
     {
-      "title": "título claro da tarefa",
-      "description": "descrição detalhada com base no CPC",
+      "title": "título claro de tarefa condizente EXCLUSIVAMENTE com a função do Perito Judicial segundo o CPC",
+      "description": "descrição detalhada da tarefa atribuída ao Perito com base no CPC",
       "deadline_days": 5,
       "cpc_article": "465",
       "decision_page": "página ou trecho do PDF onde consta a intimação ou decisão do juiz (ex: 'Página 3' ou null se não encontrado)"
@@ -4729,10 +4786,14 @@ PREENCHA TODOS OS CAMPOS. Retorne UM JSON válido com esta estrutura exata:
   ]
 }
 
-REGRAS SEVERAS:
-- OBRIGAÇÃO DE PREENCHER AUTOR, RÉU, CLASSE, ASSUNTO E ÓRGÃO: Se os nomes das partes constarem na seção PARTES DO PROCESSO ou no texto da capa do PDF, é MANDATÓRIO colocar os nomes completos exatos no JSON.
-- Jamais coloque valores fictícios ou inventados. Se honorários ou depósitos não constarem explicitamente no PDF, retorne null.
-- CRIAÇÃO DE TAREFAS DO PERITO: Crie APENAS tarefas que são atribuições diretas do Perito Judicial no processo e que foram expressamente determinadas/solicitadas em alguma decisão/despacho constante no texto do PDF.
+REGRAS SEVERAS E INVIOLÁVEIS:
+1. LEITURA PROFUNDA DO NOME DO PERITO NOMEADO: Faça uma busca minuciosa em todas as páginas e decisões do PDF para identificar se houve a nomeação de perito judicial e extrair o nome completo exato do perito nomeado.
+2. TAREFAS ESTREITAMENTE CONDIZENTES COM A FUNÇÃO DO PERITO JUDICIAL (CPC):
+   - A aplicação DEVE sugerir a criação de tarefas ESTRITAMENTE condizentes com a função e deveres do PERITO NOMEADO de acordo com o Código de Processo Civil (CPC).
+   - Exemplos de tarefas válidas e adequadas ao Perito: "Apresentar proposta de honorários periciais" (Art. 465, § 2º, I do CPC), "Comunicar data e local da perícia/vistoria às partes" (Art. 474 do CPC), "Entregar o laudo pericial" (Art. 465, § 2º, III e Art. 473 do CPC), "Prestar esclarecimentos sobre o laudo pericial" (Art. 477, § 1º do CPC), "Apresentar escusa ou justificativa de impedimento/suspeição" (Art. 467 do CPC).
+   - É PROIBIDO criar tarefas que sejam atribuições das PARTES ou de seus ADVOGADOS (ex: apresentar contestação, indicar assistente técnico, formular quesitos, recolher custas/honorários) ou do JUIZ/CARTÓRIO (ex: expedir mandado, intimar partes, proferir sentença). Sugira APENAS tarefas que cabem ao Perito Judicial executar.
+3. OBRIGAÇÃO DE PREENCHER AUTOR, RÉU, CLASSE, ASSUNTO E ÓRGÃO: Se os nomes das partes constarem na seção PARTES DO PROCESSO ou no texto da capa do PDF, é MANDATÓRIO colocar os nomes completos exatos no JSON.
+4. NUNCA coloque valores fictícios ou inventados. Se honorários ou depósitos não constarem explicitamente no PDF, retorne null.
 
 DADOS COMPLETOS DO PROCESSO:
 - Número: ${proc.numeroProcesso}
@@ -4758,7 +4819,7 @@ ${pdfText ? `\n=== TEXTO DO PDF DO PROCESSO (USAR PARA EXTRAIR AUTOR, RÉU, CLAS
 TAREFAS EXISTENTES NO SISTEMA:
 ${tasks.length ? JSON.stringify(tasks.map(t => ({ title: t.title, description: t.description, cpcArticle: t.cpcArticle })), null, 2) : 'Nenhuma'}
 
-INSTRUÇÃO FINAL: Analise TODO o conteúdo acima. Extraia obrigatoriamente os dados reais de Autor, Réu, Classe, Assunto e Órgão. Retorne SOMENTE o JSON válido sem formatação markdown em volta.`;
+INSTRUÇÃO FINAL: Analise TODO o conteúdo acima. Extraia obrigatoriamente os dados reais de Autor, Réu, Classe, Assunto, Órgão e o Perito Nomeado. Retorne SOMENTE o JSON válido sem formatação markdown em volta.`;
 }
 
 function renderAIAnalysis() {
@@ -4926,6 +4987,7 @@ function checkIfFieldsDiffer(data) {
   if (isValid(f.autor) && f.autor !== info.autor) return true;
   if (isValid(f.reu) && f.reu !== info.reu) return true;
   if (isValid(f.perito) && f.perito !== info.perito) return true;
+  if (isValid(f.justicaGratuita) && f.justicaGratuita !== info.justicaGratuita) return true;
   if (isValid(f.inversaoOnus) && f.inversaoOnus !== info.inversaoOnus) return true;
   if (isValid(f.depositoJudicial) && f.depositoJudicial !== info.depositoJudicial) return true;
   
@@ -4959,6 +5021,7 @@ function isFieldMatching(fieldName, aiValue) {
     case 'autor': return !isPlaceholderValue(info.autor) && info.autor === aiValue;
     case 'reu': return !isPlaceholderValue(info.reu) && info.reu === aiValue;
     case 'perito': return !isPlaceholderValue(info.perito) && info.perito === aiValue;
+    case 'justicaGratuita': return !isPlaceholderValue(info.justicaGratuita) && info.justicaGratuita === aiValue;
     case 'inversaoOnus': return !isPlaceholderValue(info.inversaoOnus) && info.inversaoOnus === aiValue;
     case 'depositoJudicial': return !isPlaceholderValue(info.depositoJudicial) && info.depositoJudicial === aiValue;
     case 'dataDeposito': return info.dataDeposito === aiValue;
@@ -5024,7 +5087,8 @@ function renderAIResult(data, container) {
           ${renderFieldItem('Assunto', 'assunto', data.fields.assunto)}
           ${renderFieldItem('Órgão', 'orgao', data.fields.orgao)}
           ${renderFieldItem('Perito Nomeado', 'perito', data.fields.perito)}
-          ${renderFieldItem('Inversão do Ônus', 'inversaoOnus', data.fields.inversaoOnus)}
+          ${renderFieldItem('Justiça Gratuita', 'justicaGratuita', data.fields.justicaGratuita)}
+          ${renderFieldItem('Inversão do Ônus da Prova', 'inversaoOnus', data.fields.inversaoOnus)}
           ${renderFieldItem('Depósito Judicial', 'depositoJudicial', data.fields.depositoJudicial)}
           ${renderFieldItem('Honorários Arbitrados', 'honorarios', data.fields.honorarios, true)}
           ${renderFieldItem('Valor Depósito', 'valorDeposito', data.fields.valorDeposito, true)}
@@ -5190,6 +5254,7 @@ function applyAIFields(data) {
   }
 
   if (isValid(f.perito)) activeProcess.expertInfo.perito = f.perito;
+  if (isValid(f.justicaGratuita)) activeProcess.expertInfo.justicaGratuita = f.justicaGratuita;
   if (isValid(f.inversaoOnus)) activeProcess.expertInfo.inversaoOnus = f.inversaoOnus;
   if (isValid(f.depositoJudicial)) activeProcess.expertInfo.depositoJudicial = f.depositoJudicial;
   

@@ -69,6 +69,10 @@
           <input type="text" id="reg-cpf" required placeholder="000.000.000-00" maxlength="14">
         </div>
         <div class="form-field-group">
+          <label for="reg-phone">Telefone / WhatsApp (para contato e suporte)</label>
+          <input type="tel" id="reg-phone" placeholder="(00) 90000-0000">
+        </div>
+        <div class="form-field-group">
           <label for="reg-password">Senha</label>
           <input type="password" id="reg-password" required minlength="6" placeholder="Mínimo 6 caracteres">
         </div>
@@ -375,7 +379,7 @@
       <div class="dialog-header">
         <div class="dialog-title-group">
           <span class="material-symbols-rounded dialog-header-icon" style="color: var(--md-sys-color-primary);">workspace_premium</span>
-          <h3>Assinatura Radar Perito Premium</h3>
+          <h3>Assinatura Radar Perito Premium (Asaas)</h3>
         </div>
         <button class="close-dialog-btn" onclick="closeDialog('billing-dialog')">
           <span class="material-symbols-rounded">close</span>
@@ -397,7 +401,7 @@
               </div>
             </div>
             <div style="text-align: right;">
-              <strong style="font-size: 18px; color: var(--primary);">R$ 69,90</strong>
+              <strong style="font-size: 18px; color: var(--primary);">R$ 49,90</strong>
               <span style="font-size: 12px; display: block; color: var(--text-muted);">/mês</span>
             </div>
           </label>
@@ -408,20 +412,54 @@
               <input type="radio" name="billing-plan-select" value="annual" style="accent-color: var(--primary);">
               <div>
                 <strong style="font-size: 15px; display: block;">Plano Anual Especial</strong>
-                <span style="font-size: 11px; background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-weight: 600;">Economize 28%</span>
+                <span style="font-size: 11px; background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-weight: 600;">Desconto de 33%</span>
               </div>
             </div>
             <div style="text-align: right;">
-              <strong style="font-size: 18px; color: var(--primary);">R$ 49,90</strong>
-              <span style="font-size: 12px; display: block; color: var(--text-muted);">/mês</span>
+              <strong style="font-size: 18px; color: var(--primary);">R$ 399,20</strong>
+              <span style="font-size: 12px; display: block; color: var(--text-muted);">/ano</span>
             </div>
           </label>
         </div>
 
         <button class="md-btn md-btn-primary" style="width: 100%; justify-content: center; height: 48px;" id="btn-submit-billing">
           <span class="material-symbols-rounded">credit_card</span>
-          <span>Assinar com Stripe</span>
+          <span>Assinar via Asaas (PIX / Cartão / Boleto)</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Troca de Senha Obrigatória no Primeiro Acesso -->
+  <div class="md-dialog-overlay" id="force-change-password-dialog" style="z-index: 10000; display: none;">
+    <div class="md-dialog" style="max-width: 450px;">
+      <div class="dialog-header" style="background: linear-gradient(135deg, #7c3aed, #4c1d95); color: white;">
+        <div class="dialog-title-group">
+          <span class="material-symbols-rounded dialog-header-icon" style="color: white;">lock_reset</span>
+          <h3 style="color: white; margin: 0;">Alteração Obrigatória de Senha</h3>
+        </div>
+      </div>
+      <div class="dialog-body" style="padding: 24px;">
+        <p style="font-size: 14px; color: var(--md-sys-color-on-surface-variant); margin-bottom: 16px; line-height: 1.5;">
+          Você está realizando o primeiro acesso com a sua <strong>senha temporária (CPF)</strong>. Por razões de segurança, cadastre a sua nova senha pessoal antes de continuar.
+        </p>
+
+        <form id="form-force-change-password" style="display: flex; flex-direction: column; gap: 16px;">
+          <div>
+            <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Nova Senha Pessoal (mínimo 6 caracteres)</label>
+            <input type="password" id="input-new-password" required minlength="6" placeholder="Digite sua nova senha" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+          </div>
+
+          <div>
+            <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Confirme a Nova Senha</label>
+            <input type="password" id="input-confirm-password" required minlength="6" placeholder="Repita a nova senha" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; box-sizing: border-box;">
+          </div>
+
+          <button type="submit" id="btn-save-new-password" class="md-btn md-btn-primary" style="width: 100%; justify-content: center; height: 48px; background: #7c3aed; color: white;">
+            <span class="material-symbols-rounded">check_circle</span>
+            <span>Salvar Nova Senha e Entrar</span>
+          </button>
+        </form>
       </div>
     </div>
   </div>

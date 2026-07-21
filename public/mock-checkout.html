@@ -319,27 +319,29 @@
   </div>
 
   <script>
-    // Recupera parâmetros da URL (plan e email)
+    // Recupera parâmetros da URL (plan, email, name, cpf)
     const urlParams = new URLSearchParams(window.location.search);
     const plan = urlParams.get('plan') || 'monthly';
     const email = urlParams.get('email');
+    const name = urlParams.get('name') || '';
+    const cpf = urlParams.get('cpf') || '';
 
     // Preenche o email na interface
     document.getElementById('user-email').value = email || 'erro@email.com';
 
-    // Ajusta o preço e descrição baseados no plano
+    // Ajusta o preço e descrição baseados no plano Asaas
     const priceAmount = document.getElementById('price-amount');
     const pricePeriod = document.getElementById('price-period');
     const productDesc = document.getElementById('product-desc');
 
     if (plan === 'annual') {
+      priceAmount.textContent = '399,20';
+      pricePeriod.textContent = '/ano';
+      productDesc.textContent = 'Acesso ilimitado ao Radar Perito na Assinatura Anual (R$ 399,20 cobrados anualmente via Asaas).';
+    } else {
       priceAmount.textContent = '49,90';
       pricePeriod.textContent = '/mês';
-      productDesc.textContent = 'Acesso ilimitado ao Radar Perito na Assinatura Anual (R$ 598,80 cobrados anualmente).';
-    } else {
-      priceAmount.textContent = '69,90';
-      pricePeriod.textContent = '/mês';
-      productDesc.textContent = 'Acesso ilimitado ao Radar Perito na Assinatura Mensal recorrente.';
+      productDesc.textContent = 'Acesso ilimitado ao Radar Perito na Assinatura Mensal recorrente via Asaas.';
     }
 
     // Toggle de Métodos de Pagamento
@@ -372,7 +374,7 @@
         const resp = await fetch('/api/payment/mock-confirm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, plan })
+          body: JSON.stringify({ email, plan, name, cpf })
         });
 
         if (resp.ok) {
@@ -384,7 +386,8 @@
             window.location.href = '/app?checkout=success';
           }, 1500);
         } else {
-          throw new Error('Falha ao processar simulação.');
+          const errData = await resp.json().catch(() => ({}));
+          throw new Error(errData.error || 'Falha ao processar simulação.');
         }
       } catch (err) {
         alert(err.message);

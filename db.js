@@ -106,22 +106,30 @@ async function findUserByEmail(email) {
   if (!email) return null;
   const emailClean = email.trim().toLowerCase();
 
+  let user = null;
   if (useSupabase) {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', emailClean)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', emailClean)
+        .maybeSingle();
 
-    if (error) {
-      console.error(`[Supabase] Erro ao buscar usuário ${emailClean}:`, error);
-      throw error;
+      if (!error && data) {
+        user = data;
+      }
+    } catch (err) {
+      console.warn(`[Supabase] Falha ao buscar usuário ${emailClean}:`, err.message);
     }
-    return data;
-  } else {
-    const users = await readJsonFile(USERS_FILE);
-    return users.find(u => u.email === emailClean) || null;
   }
+
+  const users = await readJsonFile(USERS_FILE);
+  const localUser = users.find(u => u.email === emailClean) || null;
+
+  if (user && localUser) {
+    return { ...localUser, ...user };
+  }
+  return user || localUser;
 }
 
 async function createUser(user) {
@@ -131,19 +139,28 @@ async function createUser(user) {
     email: emailClean
   };
 
-  if (useSupabase) {
-    const { error } = await supabase
-      .from('users')
-      .insert([formattedUser]);
-
-    if (error) {
-      console.error(`[Supabase] Erro ao criar usuário ${emailClean}:`, error);
-      throw error;
-    }
+  // Garante a persistência local resiliente em JSON
+  const users = await readJsonFile(USERS_FILE);
+  const existingIdx = users.findIndex(u => u.email === emailClean);
+  if (existingIdx !== -1) {
+    users[existingIdx] = { ...users[existingIdx], ...formattedUser };
   } else {
-    const users = await readJsonFile(USERS_FILE);
     users.push(formattedUser);
-    await writeJsonFile(USERS_FILE, users);
+  }
+  await writeJsonFile(USERS_FILE, users);
+
+  if (useSupabase) {
+    try {
+      const { error } = await supabase
+        .from('users')
+        .insert([formattedUser]);
+
+      if (error) {
+        console.warn(`[Supabase] Erro ao criar usuário ${emailClean} no Supabase (salvo no JSON local):`, error.message);
+      }
+    } catch (err) {
+      console.warn(`[Supabase] Exceção ao criar usuário ${emailClean}:`, err.message);
+    }
   }
   return formattedUser;
 }
@@ -152,22 +169,26 @@ async function updateUser(email, updateFields) {
   if (!email) return;
   const emailClean = email.trim().toLowerCase();
 
-  if (useSupabase) {
-    const { error } = await supabase
-      .from('users')
-      .update(updateFields)
-      .eq('email', emailClean);
+  // Garante atualização no armazenamento local JSON
+  const users = await readJsonFile(USERS_FILE);
+  const index = users.findIndex(u => u.email === emailClean);
+  if (index !== -1) {
+    users[index] = { ...users[index], ...updateFields };
+    await writeJsonFile(USERS_FILE, users);
+  }
 
-    if (error) {
-      console.error(`[Supabase] Erro ao atualizar usuário ${emailClean}:`, error);
-      throw error;
-    }
-  } else {
-    const users = await readJsonFile(USERS_FILE);
-    const index = users.findIndex(u => u.email === emailClean);
-    if (index !== -1) {
-      users[index] = { ...users[index], ...updateFields };
-      await writeJsonFile(USERS_FILE, users);
+  if (useSupabase) {
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update(updateFields)
+        .eq('email', emailClean);
+
+      if (error) {
+        console.warn(`[Supabase] Aviso ao atualizar usuário ${emailClean} no Supabase (atualizado no JSON local):`, error.message);
+      }
+    } catch (err) {
+      console.warn(`[Supabase] Exceção ao atualizar usuário ${emailClean}:`, err.message);
     }
   }
 }
@@ -176,33 +197,43 @@ async function deleteUser(email) {
   if (!email) return;
   const emailClean = email.trim().toLowerCase();
 
+  const users = await readJsonFile(USERS_FILE);
+  const index = users.findIndex(u => u.email === emailClean);
+  if (index !== -1) {
+    users.splice(index, 1);
+    await writeJsonFile(USERS_FILE, users);
+  }
+
   if (useSupabase) {
-    // Remove usuário e também as nomeações associadas (integridade referencial opcional)
-    const { error: errRadar } = await supabase
-      .from('radar')
-      .delete()
-      .eq('userEmail', emailClean);
-    if (errRadar) {
-      console.error(`[Supabase] Erro ao remover radar do usuário excluído ${emailClean}:`, errRadar);
-    }
-
-    const { error } = await supabase
-      .from('users')
-      .delete()
-      .eq('email', emailClean);
-
-    if (error) {
-      console.error(`[Supabase] Erro ao remover usuário ${emailClean}:`, error);
-      throw error;
-    }
-  } else {
-    const users = await readJsonFile(USERS_FILE);
-    const index = users.findIndex(u => u.email === emailClean);
-    if (index !== -1) {
-      users.splice(index, 1);
-      await writeJsonFile(USERS_FILE, users);
+    try {
+      await supabase.from('radar').delete().eq('userEmail', emailClean);
+      await supabase.from('users').delete().eq('email', emailClean);
+    } catch (err) {
+      console.warn(`[Supabase] Erro ao remover usuário ${emailClean}:`, err.message);
     }
   }
+}
+
+async function getAllUsers() {
+  let dbUsers = [];
+  if (useSupabase) {
+    try {
+      const { data, error } = await supabase.from('users').select('*');
+      if (!error && data) dbUsers = data;
+    } catch (err) {
+      console.warn('[Supabase] Falha ao carregar usuários:', err.message);
+    }
+  }
+
+  const localUsers = await readJsonFile(USERS_FILE);
+  const userMap = new Map();
+  localUsers.forEach(u => userMap.set(u.email, u));
+  dbUsers.forEach(u => {
+    const existing = userMap.get(u.email) || {};
+    userMap.set(u.email, { ...existing, ...u });
+  });
+
+  return Array.from(userMap.values());
 }
 
 // === API DO RADAR ===

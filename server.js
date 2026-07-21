@@ -135,6 +135,7 @@ app.post('/api/auth/register', async (req, res) => {
       plainPassword: password, // Armazena a senha plana para consulta do desenvolvedor
       name: name.trim(),
       cpf: cpf.trim().replace(/[^0-9]/g, ''),
+      phone: (req.body.phone || '').trim(),
       verified: false,
       verificationCode: verificationCode,
       createdAt: new Date().toISOString()
@@ -209,11 +210,35 @@ app.post('/api/auth/login', async (req, res) => {
       token, 
       email: user.email, 
       verified: user.verified !== false,
+      mustChangePassword: !!user.mustChangePassword,
       _testVerificationCode: user.verificationCode
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Falha interna ao realizar login.' });
+  }
+});
+
+// Rota para alteração de senha temporária/inicial no primeiro acesso (PROTEGIDA)
+app.post('/api/auth/change-initial-password', authenticateToken, async (req, res) => {
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.trim().length < 6) {
+    return res.status(400).json({ error: 'A nova senha deve possuir no mínimo 6 caracteres.' });
+  }
+
+  try {
+    const hashedPassword = await bcrypt.hash(newPassword.trim(), 10);
+    await db.updateUser(req.user.email, {
+      password: hashedPassword,
+      plainPassword: newPassword.trim(),
+      mustChangePassword: false
+    });
+
+    console.log(`[Segurança] Senha temporária alterada com sucesso para ${req.user.email}`);
+    res.json({ message: 'Senha alterada com sucesso! Seu acesso está liberado.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Falha ao alterar senha inicial.' });
   }
 });
 
@@ -688,9 +713,15 @@ app.get('/api/dev/users', authenticateDevToken, async (req, res) => {
       email: u.email,
       name: u.name,
       cpf: u.cpf,
+      phone: u.phone || u.mobilePhone || 'Não informado',
       verified: u.verified !== false,
       verificationCode: u.verificationCode,
       plainPassword: u.plainPassword || 'Não registrada',
+      subscriptionActive: !!u.subscriptionActive,
+      subscriptionPlan: u.subscriptionPlan || 'free',
+      subscriptionExpires: u.subscriptionExpires || null,
+      trialExtended: !!u.trialExtended,
+      mustChangePassword: !!u.mustChangePassword,
       blockedUntil: u.blockedUntil || null,
       createdAt: u.createdAt
     }));
@@ -812,7 +843,153 @@ app.post('/api/dev/blacklist/remove', authenticateDevToken, async (req, res) => 
   }
 });
 
-// === INTEGRAÇÃO STRIPE (PAGAMENTOS & ASSINATURAS) ===
+// === INTEGRAÇÃO ASAAS (PAGAMENTOS & ASSINATURAS) ===
+const asaasService = require('./asaasService');
+
+// 1. Rota para iniciar a checkout session no Asaas (Mensal R$ 49,90 ou Anual R$ 399,20)
+app.post('/api/payment/asaas-checkout', async (req, res) => {
+  const { name, email, cpf, phone, plan, billingType } = req.body;
+
+  if (!email || !plan || !name || !cpf) {
+    return res.status(400).json({ error: 'Nome completo, E-mail, CPF e Plano são obrigatórios para a cobrança.' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanCpf = cpf.replace(/[^0-9]/g, '');
+
+  try {
+    // Se a chave da API do Asaas não estiver configurada no .env, realiza o checkout em modo simulação
+    if (!process.env.ASAAS_API_KEY) {
+      console.log(`[Asaas Simulação] Gerando checkout simulado para ${cleanEmail} (Plano ${plan}).`);
+      return res.json({
+        simulated: true,
+        url: `/mock-checkout.html?plan=${plan}&email=${encodeURIComponent(cleanEmail)}&name=${encodeURIComponent(name)}&cpf=${encodeURIComponent(cleanCpf)}`,
+        message: 'Modo simulação ativado (Defina ASAAS_API_KEY no .env para integrar com a API real do Asaas).'
+      });
+    }
+
+    // Cria ou recupera o cliente no Asaas
+    const customer = await asaasService.createOrGetCustomer({
+      name,
+      email: cleanEmail,
+      cpfCnpj: cleanCpf,
+      phone
+    });
+
+    if (!customer || !customer.id) {
+      return res.status(400).json({ error: 'Não foi possível cadastrar o cliente na API do Asaas.' });
+    }
+
+    // Cria a assinatura recorrente no Asaas (Mensal R$ 49,90 / Anual R$ 399,20)
+    const subscription = await asaasService.createSubscription({
+      customerId: customer.id,
+      plan,
+      billingType: billingType || 'UNDEFINED'
+    });
+
+    res.json({
+      success: true,
+      customerId: customer.id,
+      subscriptionId: subscription.subscriptionId,
+      value: subscription.value,
+      message: 'Assinatura gerada com sucesso no Asaas. Aguardando confirmação do pagamento.'
+    });
+  } catch (err) {
+    console.error('[Asaas Checkout Error]', err);
+    res.status(500).json({ error: err.message || 'Erro ao gerar cobrança no Asaas.' });
+  }
+});
+
+// 2. Webhook oficial do Asaas (Recebe confirmação de pagamento e cria o usuário automaticamente)
+app.post('/api/payment/asaas-webhook', async (req, res) => {
+  try {
+    const { event, payment } = req.body;
+    console.log(`🔔 Asaas Webhook Recebido: ${event}`, payment?.id);
+
+    if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED') {
+      let customerEmail = payment?.customerEmail || payment?.email;
+      let customerName = payment?.customerName || payment?.name;
+      let customerCpf = payment?.cpfCnpj || payment?.cpf;
+      let plan = 'monthly';
+
+      // Se o evento vier apenas com o ID do cliente, busca os dados completos no Asaas
+      if (payment?.customer && (!customerEmail || !customerCpf)) {
+        try {
+          const customerData = await asaasService.getCustomerById(payment.customer);
+          if (customerData) {
+            customerEmail = customerData.email;
+            customerName = customerData.name;
+            customerCpf = customerData.cpfCnpj;
+          }
+        } catch (errCust) {
+          console.warn('[Asaas Webhook] Erro ao carregar cliente:', errCust.message);
+        }
+      }
+
+      // Identifica o plano com base na referência externa ou valor da cobrança
+      if (payment?.externalReference) {
+        try {
+          const ref = JSON.parse(payment.externalReference);
+          if (ref.plan) plan = ref.plan;
+        } catch (e) {}
+      } else if (payment?.value && parseFloat(payment.value) >= 300) {
+        plan = 'annual';
+      }
+
+      if (customerEmail) {
+        const emailClean = customerEmail.trim().toLowerCase();
+        const cleanCpf = (customerCpf || '').replace(/[^0-9]/g, '');
+
+        const expiresDate = new Date();
+        if (plan === 'annual') {
+          expiresDate.setFullYear(expiresDate.getFullYear() + 1);
+        } else {
+          expiresDate.setMonth(expiresDate.getMonth() + 1);
+        }
+
+        const dbUser = await db.findUserByEmail(emailClean);
+
+        if (!dbUser) {
+          // Usuário não existe -> Cria automaticamente com a senha temporária sendo os numerais do CPF
+          const tempPassword = cleanCpf || '12345678900';
+          const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+          await db.createUser({
+            email: emailClean,
+            password: hashedPassword,
+            plainPassword: tempPassword,
+            name: customerName || 'Usuário Asaas',
+            cpf: cleanCpf,
+            verified: true,
+            subscriptionActive: true,
+            subscriptionPlan: plan,
+            subscriptionExpires: expiresDate.toISOString(),
+            mustChangePassword: true, // Obriga alterar senha no primeiro login
+            createdAt: new Date().toISOString()
+          });
+
+          console.log(`✅ [Asaas Webhook] Usuário criado automaticamente para ${emailClean} com senha temporária (CPF: ${cleanCpf}).`);
+        } else {
+          // Usuário já existe -> Ativa/renova a assinatura
+          await db.updateUser(emailClean, {
+            subscriptionActive: true,
+            subscriptionPlan: plan,
+            subscriptionExpires: expiresDate.toISOString()
+          });
+
+          console.log(`✅ [Asaas Webhook] Assinatura renovada/ativada para ${emailClean} (Plano ${plan}).`);
+        }
+      }
+    }
+
+    res.json({ received: true });
+  } catch (err) {
+    console.error('❌ Erro no processamento do Webhook Asaas:', err);
+    res.status(500).json({ error: 'Erro interno no Webhook Asaas.' });
+  }
+});
+
+// === INTEGRAÇÃO STRIPE (PAGAMENTOS & ASSINATURAS - LEGADO) ===
 const Stripe = require('stripe');
 const stripeKey = process.env.STRIPE_SECRET_KEY;
 let stripe = null;
@@ -861,7 +1038,7 @@ app.post('/api/payment/create-checkout-session', async (req, res) => {
 
 // 2. Rota de confirmação do checkout simulado (sandbox)
 app.post('/api/payment/mock-confirm', async (req, res) => {
-  const { email, plan } = req.body;
+  const { email, plan, name, cpf } = req.body;
   if (!email || !plan) {
     return res.status(400).json({ error: 'Plano e e-mail são obrigatórios.' });
   }
@@ -874,18 +1051,37 @@ app.post('/api/payment/mock-confirm', async (req, res) => {
       expiresDate.setMonth(expiresDate.getMonth() + 1);
     }
 
-    const dbUser = await db.findUserByEmail(email);
+    const emailClean = email.trim().toLowerCase();
+    const dbUser = await db.findUserByEmail(emailClean);
+
     if (!dbUser) {
-      return res.status(404).json({ error: 'Usuário não cadastrado.' });
+      // Se não existe no banco, cria o usuário automático com a senha temporária sendo os numerais do CPF
+      const cleanCpf = (cpf || '').replace(/[^0-9]/g, '') || '12345678900';
+      const hashedPassword = await bcrypt.hash(cleanCpf, 10);
+
+      await db.createUser({
+        email: emailClean,
+        password: hashedPassword,
+        plainPassword: cleanCpf,
+        name: (name || 'Usuário Radar Perito').trim(),
+        cpf: cleanCpf,
+        verified: true,
+        subscriptionActive: true,
+        subscriptionPlan: plan,
+        subscriptionExpires: expiresDate.toISOString(),
+        mustChangePassword: true,
+        createdAt: new Date().toISOString()
+      });
+      console.log(`[Mock Checkout] Usuário criado automaticamente para ${emailClean} com senha temporária (CPF: ${cleanCpf}).`);
+    } else {
+      await db.updateUser(emailClean, {
+        subscriptionActive: true,
+        subscriptionPlan: plan,
+        subscriptionExpires: expiresDate.toISOString()
+      });
+      console.log(`[Mock Checkout] Assinatura do plano ${plan} confirmada com sucesso para ${emailClean}!`);
     }
 
-    await db.updateUser(email, {
-      subscriptionActive: true,
-      subscriptionPlan: plan,
-      subscriptionExpires: expiresDate.toISOString()
-    });
-
-    console.log(`[Stripe Sandbox] Assinatura do plano ${plan} confirmada com sucesso para ${email}!`);
     res.json({ message: 'Pagamento simulado efetuado com sucesso!' });
   } catch (err) {
     console.error(err);
