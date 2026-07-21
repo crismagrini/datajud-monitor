@@ -2,9 +2,12 @@ const fs = require('fs').promises;
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 
+const DEFAULT_SUPABASE_URL = 'https://kivijjbwktgcjbthkque.supabase.co';
+const DEFAULT_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpdmlqamJ3a3RnY2pidGhrcXVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNTc2MzQsImV4cCI6MjA5OTczMzYzNH0.iknAdlHezamlfpM436vGGUCUIi_l4yQdDjr8VW91wRE';
+
 // Configuração do Supabase
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
+const supabaseUrl = process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY || DEFAULT_SUPABASE_KEY;
 
 let supabase = null;
 let useSupabase = false;

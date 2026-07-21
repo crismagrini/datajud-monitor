@@ -65,7 +65,7 @@ async function authFetch(url, options = {}) {
   try {
     const response = await fetch(url, options);
     
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401 || response.status === 403 || response.status === 404) {
       const clone = response.clone();
       try {
         const errData = await clone.json();
@@ -74,14 +74,25 @@ async function authFetch(url, options = {}) {
           openDialog('billing-dialog');
           return response;
         }
+        if (errData && errData.error === 'Usuário não localizado.') {
+          jwtToken = null;
+          currentUserEmail = null;
+          localStorage.removeItem('jwt_token');
+          localStorage.removeItem('user_email');
+          showAuthScreen();
+          showToast('Sua conta não foi encontrada no servidor. Por favor, entre ou cadastre-se novamente.', 5000);
+          return response;
+        }
       } catch (e) {}
 
-      jwtToken = null;
-      currentUserEmail = null;
-      localStorage.removeItem('jwt_token');
-      localStorage.removeItem('user_email');
-      showAuthScreen();
-      showToast('Sessão expirada ou inválida. Por favor, entre novamente.', 5000);
+      if (response.status === 401 || response.status === 403) {
+        jwtToken = null;
+        currentUserEmail = null;
+        localStorage.removeItem('jwt_token');
+        localStorage.removeItem('user_email');
+        showAuthScreen();
+        showToast('Sessão expirada ou inválida. Por favor, entre novamente.', 5000);
+      }
     }
     
     return response;
